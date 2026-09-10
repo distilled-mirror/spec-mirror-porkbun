@@ -1,0 +1,235 @@
+# Porkbun
+
+> Porkbun is a domain registrar with a developer-friendly REST API for programmatic domain registration, transfers, DNS management, SSL certificates, static site hosting, and related operations. The API is built for AI agents and automation: machine-readable error codes, idempotency keys on writes, request IDs, version signalling, header auth, GET on all reads, signed outbound webhooks, and an official MCP server.
+
+The OpenAPI spec is at https://porkbun.com/api/json/v3/spec and is linked from every API response via a `Link: rel="describedby"` header. Documentation home (all formats): https://porkbun.com/api/json/v3/documentation — interactive reference at https://porkbun.com/api/json/v3/documentation/interactive
+
+Note: unlike some registrars, Porkbun API keys work regardless of whether account two-factor authentication is enabled — you never have to weaken account security to automate.
+
+## What you can do with the Porkbun API
+
+- Check domain availability and pricing across hundreds of TLDs (no auth required)
+- Register, renew, and transfer-in domain names programmatically
+- Get a single domain or list/filter all domains in an account (by TLD, expiry window, auto-renew, API-access)
+- Create, read, update, and delete DNS records (A, AAAA, CNAME, MX, TXT, NS, SRV, CAA, TLSA, SSHFP, ALIAS, HTTPS, SVCB)
+- Manage DNSSEC records, URL forwarding, and glue records
+- Retrieve free SSL certificate bundles for registered domains
+- Provision and deploy Secure Static Hosting for a domain — create hosting (15-day free trial, one per domain), upload site files, and serve a static site over HTTPS, entirely via the API
+- Provision a managed **WordPress** site (Cloud for WordPress) on a domain, then mint WordPress REST API credentials so an agent can publish and manage content on it — end to end, no dashboard
+- Test the whole API end-to-end in an isolated **sandbox** — a `pk1_sb_` key runs every operation against a simulated environment with fake credit (no real registry actions, DNS changes, or charges), including delivering signed webhooks
+- Learn any endpoint's response shape with **zero credentials** via the mock server at `/mock/<path>`
+- Read account credit balance and API spend-control settings
+- Browse the domain marketplace with server-side filters (query, TLD, SLD length, sort)
+- Set auto-renewal across a portfolio; detect caller IP for dynamic DNS
+- Subscribe to outbound webhooks for real-time, signed event notifications (registrations, renewals, transfers, upcoming expirations, DNS changes) instead of polling
+
+## Agent-safety features (why this API is good for autonomous use)
+
+- **Dry run / validate-only** — pass `dryRun: true` to rehearse a write without performing it. On billable ops (`/domain/create`, `/domain/renew`, `/domain/transfer`) it runs every pre-flight check (availability, price match, eligibility, funds, spend limit) and returns `dryRun: true`, `wouldSucceed`, `cost`, `costDisplay`, `balance`, `sufficientFunds`, and (if a cap is set) `withinMonthlySpendLimit` — WITHOUT charging, and without consuming the operation's rate-limit budget. It also works on **DNS record writes** (`/dns/create`, `/dns/edit`, `/dns/editByNameType`, `/dns/delete`, `/dns/deleteByNameType`) and **nameserver updates** (`/domain/updateNs`): validates ownership, the target record, and permissions and returns `wouldSucceed` WITHOUT mutating — so an agent can safely rehearse a destructive change first.
+- **Idempotency keys** — send `Idempotency-Key: <unique-string>` on any POST; retries within 24h replay the original response instead of re-charging or double-registering. Reused key with a different body returns 409 `IDEMPOTENCY_KEY_MISMATCH`; an in-flight duplicate returns 409 `IDEMPOTENCY_KEY_IN_USE`.
+- **Request IDs** — every response carries an `X-Request-Id` header and a `requestId` body field (UUIDv7) for retry-dedup, log correlation, and support tickets.
+- **Registration requirements as JSON Schema** — `GET /domain/getRegistrationRequirements/{tld}` tells you upfront whether a TLD is API-registerable and returns the `/domain/create` body as a JSON Schema, plus (for TLDs with registry eligibility rules like .us/.ca) a schema of the required fields + allowed values. Validate a registration before attempting it instead of discovering requirements via a failed call.
+- **Version signalling** — every response carries `X-API-Version` (e.g. `3.4`). The URL path stays `/api/json/v3/`; minor bumps are always backward-compatible, so you can pin `v3` and watch the header / Changelog for additions.
+- **Outbound webhooks** — register HTTPS endpoints and Porkbun POSTs a signed JSON payload when events occur, so an agent reacts to state changes instead of polling. Events: `domain.registered`, `domain.renewed`, `domain.transfer.completed`, `domain.expiring`, `dns.record.created|updated|deleted`. Each delivery carries `X-Porkbun-Signature` = `sha256=` + `HMAC-SHA256(secret, "{timestamp}.{rawBody}")` (timestamp from `X-Porkbun-Webhook-Timestamp`); verify it with a constant-time compare and reject stale timestamps. Delivery targets must be publicly reachable HTTPS on port 443 (`INVALID_WEBHOOK_URL` otherwise) and the rule is enforced again at delivery time, so pointing a registered endpoint's DNS at private space stops delivery rather than reaching it. `lastError` reports transport problems as a class, not a raw socket error; HTTP failures still read `HTTP <code>`. Failed deliveries retry with exponential backoff (6 attempts) and a ~30-day delivery log is queryable (`/webhook/deliveries`, `/webhook/delivery/{id}`) with manual replay via `/webhook/resend` (reuses the original event id). Manage via the `/webhook/*` endpoints or the MCP `*_webhook` tools.
+- **Machine-readable error codes** — every error has `status: "ERROR"`, a human `message`, and a stable `code`.
+- **Actionable errors** — most errors also carry a `next_action` object (`{type, hint, retryable, url?}`) telling you how to recover (re-quote the price, enable API access, add funds, register on the website, etc.). `type` is a small stable vocabulary (`fix_request`, `authenticate`, `enable_setting`, `add_funds`, `wait_and_retry`, `use_website`, …) and `retryable` is a boolean — `true` only when re-sending the same request can succeed on its own. Branch on `code`/`type`/`retryable`, never on `message`.
+- **Per-operation safety metadata** — every operation in the OpenAPI carries an `x-porkbun-agent` extension (`safe`, `cost`, `destructive`, `reversible`, `requiresConfirmation`) so a planner can tell a read from a billable or destructive write without heuristics. The official MCP exposes equivalent read-only/destructive hints as standard MCP tool annotations.
+- **Rate-limit headers** — `Retry-After` (seconds to wait) on every 429, plus `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` on rate-limited endpoints.
+- **Spec self-discovery** — `Link: <...spec>; rel="describedby"` on every response.
+- **Per-key scoping** — each API key can be restricted to specific source IPs (CIDR supported) and/or specific domains; out-of-policy calls return 403 `IP_NOT_ALLOWED` / `DOMAIN_NOT_ALLOWED`. Hand an agent a key that can only touch the domains you intend, from the network you expect.
+- **Spend controls** — per-account monthly API spend limit, low-balance alerts, and auto top-up, enforced on registrations/renewals/transfers.
+
+## Guarantees (stable within v3)
+
+- **Operation timing** — nearly everything is synchronous and takes effect before the response returns. The only long-running operation is an inbound domain transfer (days): poll `GET /domain/getTransfer/{domain}` or subscribe to `domain.transfer.completed` instead of blocking.
+- **Idempotency** — a POST replay with the same `Idempotency-Key` returns the stored response for 24h; different body → 409 `IDEMPOTENCY_KEY_MISMATCH`; in-flight duplicate → 409 `IDEMPOTENCY_KEY_IN_USE`.
+- **Webhooks** — at-least-once delivery; dedupe on `X-Porkbun-Webhook-Id` (UUIDv7). Ordering is NOT guaranteed. Retries ~1m/5m/30m/2h/6h (6 attempts); ~30-day delivery log; endpoint auto-disabled after 20 consecutive failures.
+- **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3; minor bumps (`X-API-Version`) are strictly additive and never remove or repurpose a field. Breaking changes get a new major + new path.
+
+## Sandbox (test environment)
+
+Build and test an integration end-to-end with **no real registry actions, no DNS changes, no certificates, and no charges** by using a **sandbox API key** — a public key prefixed `pk1_sb_` (secret `sk1_sb_`), created at https://porkbun.com/account/api. Same base URL (`https://api.porkbun.com/api/json/v3`); just swap the key.
+
+**Get one instantly, no signup:** `POST /apikey/request` with `{"sandbox": true}` returns a ready-to-use sandbox key pair immediately (throwaway test account, $1000 fake credit) — no account, no approval. Then just set it as `apikey`/`secretapikey`.
+
+- Every response carries `"sandbox": true` and an `X-Porkbun-Sandbox: true` header, so an agent can assert it is not operating on production.
+- Domain registration, renewal, transfer, DNS, contacts, nameservers, glue, and DNSSEC are simulated against an isolated datastore; your sandbox account starts with fake credit. Top up or reset with `POST /sandbox/topup` and `POST /sandbox/reset`.
+- Availability and pricing reflect the real catalog, so quotes match production.
+- Endpoints that can't be simulated — hosting and email — return `SANDBOX_UNSUPPORTED`.
+- **Webhooks work in the sandbox.** Register an endpoint with `POST /webhook/create`, then either perform an operation (registration, renewal, transfer, DNS change → the matching event is signed and delivered exactly like production) or fire any event on demand with `POST /sandbox/triggerWebhook` `{"eventType": "domain.expiring", "domain": "example.com"}` to test your handler and signature verification without waiting for a real event.
+
+## Mock server (no credentials)
+
+Learn any endpoint's exact response shape with zero setup — no key, no account, nothing to install. Every real path is mirrored under `/mock`:
+
+- `GET https://api.porkbun.com/api/json/v3/mock` — list every mockable endpoint.
+- `GET|POST https://api.porkbun.com/api/json/v3/mock/<path>` — a schema-accurate example success response for that operation (e.g. `/mock/domain/listAll`, `/mock/dns/create/example.com`). Append `?status=error` for the error-response shape.
+
+Mock responses touch no datastore and are identical in shape to the live API (signalled by an `X-Porkbun-Mock: true` header), so you can wire up and test client code before you have credentials. When you're ready for real behavior with fake money, switch to a sandbox key.
+
+## Official MCP server
+
+Setup, client configs and the full tool list: **https://porkbun.com/mcp**
+
+Porkbun ships a first-party Model Context Protocol server exposing the whole API as native tools (Claude Desktop, Cursor, Cline, etc.). Write tools auto-attach an Idempotency-Key. One server covers both **live operations** and **documentation grounding** — alongside the domain/DNS/SSL/webhook tools it includes `list_doc_topics`, `read_doc`, and `search_docs`, so an agent can search and read these docs in-session without leaving the conversation (no separate docs server to install).
+
+```
+npx -y @porkbunllc/mcp-server
+```
+
+Repo: https://github.com/oborseth/Porkbun-MCP — configure with `PORKBUN_API_KEY` / `PORKBUN_SECRET_API_KEY`.
+
+**Agent setup:** a ready-to-paste prompt that an AI coding agent can run to install the MCP, obtain + scope credentials, and verify — https://porkbun.com/llms/agent-setup
+
+## Quickstart (agentic domain registration)
+
+1. Check availability + price: `POST https://api.porkbun.com/api/json/v3/domain/checkDomain/{domain}`
+2. Register: `POST /domain/create/{domain}` with `cost` (price in pennies as integer, must match the quote), `agreeToTerms: "yes"`, and an `Idempotency-Key` header
+3. Add DNS: `POST /dns/create/{domain}` with `type`, `content`, optional `ttl`
+
+## Authentication
+
+Pass `apikey` and `secretapikey` in the JSON body, or use `X-API-Key` / `X-Secret-API-Key` request headers (preferred for GET and agent frameworks). A short-lived bearer token is also available via `/auth/getToken` (`Authorization: Bearer <token>`). Create keys at https://porkbun.com/account/api
+
+**Agent / app key handoff (PKCE).** An app that doesn't yet have keys can get them without ever handling the user's password: `POST /apikey/request` with a `codeChallenge` (S256) returns an `authUrl`; send the user there to approve (they can create a Porkbun account first if they don't have one), then call `/apikey/retrieve` with the matching `codeVerifier` to receive both keys once — the secret is never shown in the browser. Native/mobile apps can add a `returnUrl` (an HTTPS Universal Link / App Link) to be redirected back into the app after approval; only `status` + `requestToken` ride the redirect, never the key. Step-by-step for a mobile app (both existing and brand-new users): https://porkbun.com/llms/guides/onboard-a-mobile-app-user
+
+## Guides
+
+Task-oriented walkthroughs. Prose, not generated from the spec — they cover the sequencing, the failure modes and the judgement calls that endpoint reference cannot.
+
+- Getting started (keys, auth, first call): https://porkbun.com/llms/guides/getting-started
+- Register a domain end-to-end (dry run + idempotency): https://porkbun.com/llms/guides/register-a-domain
+- Move domains to a customer's own Cloudflare account: https://porkbun.com/llms/guides/move-domains-to-cloudflare
+- Provision a WordPress site and publish to it: https://porkbun.com/llms/guides/publish-to-wordpress
+- Dynamic DNS: keep an A record on your current IP: https://porkbun.com/llms/guides/dynamic-dns
+- Receive and verify webhooks: https://porkbun.com/llms/guides/verify-a-webhook
+- Verify a user owns a domain (DomainAttest): https://porkbun.com/llms/guides/verify-domain-ownership
+- Onboard a user in a mobile/native app (PKCE key handoff): https://porkbun.com/llms/guides/onboard-a-mobile-app-user
+
+Index: https://porkbun.com/llms/guides
+
+## Key endpoints
+
+- `GET/POST /ping` — verify credentials, get caller IP
+- `GET/POST /ip` — caller IP, no auth
+- `GET/POST /pricing/get` — pricing across all TLDs (no auth)
+- `POST /domain/checkDomain/{domain}` — availability + price (registration, renewal, transfer)
+- `GET /domain/getRegistrationRequirements/{tld}` — is the TLD API-registerable + the create-request body as JSON Schema + any registry eligibility fields (e.g. .us nexus, .ca legal type). Call before create to validate eligibility/payload
+- `POST /domain/create/{domain}` — register
+- `POST /domain/renew/{domain}` — renew
+- `POST /domain/transfer/{domain}` — initiate inbound transfer (needs `authCode`)
+- `GET /domain/getTransfer/{domain}` , `GET /domain/listTransfers` — transfer status
+- `GET /domain/get/{domain}` — single domain detail
+- `GET/POST /domain/listAll` — list/filter domains (`?tlds[]=`, `?expiringWithinDays=`, `?autoRenew=`, `?apiAccess=`, `?nameContains=`, `?sortName=`, `?start=`)
+- `GET/POST /dns/retrieve/{domain}` — get DNS records
+- `POST /dns/create/{domain}` , `POST /dns/edit/{domain}/{id}` , `POST /dns/delete/{domain}/{id}` — manage DNS
+- `GET/POST /ssl/retrieve/{domain}` — SSL bundle
+- `GET /account/balance` — account credit balance
+- `GET /account/apiSettings` — spend-control settings + current month spend
+- `POST /marketplace/getAll` — marketplace listings with filters
+- `GET /webhook/eventTypes` — subscribable event-type catalog
+- `GET /webhook/list` , `GET /webhook/get/{id}` — list / fetch webhook endpoints
+- `POST /webhook/create` — register an HTTPS endpoint (returns the signing secret). The URL must be `https://` on port 443 with a hostname resolving to a **public** internet address, and must not embed credentials; private/loopback/link-local/CGNAT/reserved targets are refused with `INVALID_WEBHOOK_URL`. A not-yet-resolving hostname is accepted so you can register before deploying the receiver, but the rules are re-checked (and the connection pinned to the vetted address) immediately before every delivery
+- `POST /webhook/update` — change url/events/status (ACTIVE|DISABLED)
+- `POST /webhook/rotateSecret` , `POST /webhook/test` , `POST /webhook/delete` — rotate secret, send a test event, delete
+- `GET /webhook/deliveries` , `GET /webhook/delivery/{id}` — recent delivery log (~30 days) + single delivery with full payload
+- `POST /webhook/resend` — re-queue a past delivery (reuses the original event id)
+### Cloudflare connect — move domains to the customer's own Cloudflare account
+
+We create the zone in their Cloudflare account, copy across the DNS records we hold, and repoint the registry nameservers. Two stages, and the first needs a human.
+
+**Stage 1 — connect the Cloudflare account (browser, one time).** Cloudflare's consent screen can't be completed over the API, and the authorization is bound to the Porkbun web session that starts it. So: send the account owner to `https://porkbun.com/account/connectCloudflare`, then poll.
+- `GET /cloudflare/getConnection` — `connected` true/false, which Cloudflare account it points at, and a `connectUrl` + `nextStep` when a human still has to act. **This is the poll target.**
+- `POST /cloudflare/disconnect` — forget the grant (domains already moved stay on Cloudflare)
+
+**Stage 2 — move domains (fully API).**
+- `GET /cloudflare/inventory` — every domain with `state` (`eligible`/`warn`/`blocked`/`connected`/`inprogress`) and a human `reason`. Read this first; works before the account is connected, so an agent can plan while the owner authorizes
+- `POST /cloudflare/connect` — queue one or many (`{"domains":["a.com","b.com"]}`, `dryRun`-able). **Asynchronous**: returns *queued*, never *connected*
+- `GET /cloudflare/getQueue` — every move ever requested (rows are never deleted, so it's the audit trail too)
+- `GET /cloudflare/get/{domain}` — one domain's progress, zone id, and the nameservers we replaced
+- `POST /cloudflare/retry/{domain}` — re-queue a failure
+- `GET /cloudflare/preview/{domain}` — exactly which records a move would copy/drop, without queueing
+- `GET /cloudflare/getRecords/{domain}` — the domain's **live** records at Cloudflare with their proxied state. After a move this is authoritative; `/dns/retrieve` reads the Porkbun zone, which no longer answers
+- `GET /cloudflare/getZone/{domain}` — Cloudflare's own zone state (status, its nameservers) plus `nameserversDrifted` if someone repointed NS elsewhere
+- `POST /cloudflare/setProxy/{domain}` — turn the Cloudflare proxy on/off (`{"enabled":true}`, optional `records:["@","www"]`). **The move always imports DNS-only (grey) on purpose**; proxying is a separate explicit step, best done after confirming the site still serves. Only A/AAAA/CNAME are proxiable; warns if MX points at a name you're proxying
+- `POST /cloudflare/createRecord/{domain}` , `POST /cloudflare/editRecord/{domain}/{recordId}` , `POST /cloudflare/deleteRecord/{domain}/{recordId}` — **write DNS in the zone that actually answers.** After a move these are the endpoints that change resolution; `/dns/*` does not. `name` takes `@` or a bare label, MX needs `priority`, `proxied` is A/AAAA/CNAME only, structured types (SRV/CAA) take a `data` object. All `dryRun`-able
+- `GET /cloudflare/getZoneSettings/{domain}` / `POST /cloudflare/setZoneSettings/{domain}` — allowlisted zone settings (`ssl`, `always_use_https`, `automatic_https_rewrites`, `min_tls_version`, `development_mode`, `cache_level`). Warns when `ssl` is `flexible`/`off` (Cloudflare fetches the origin over plain HTTP while visitors see a padlock). Returns `CLOUDFLARE_REAUTHORIZE_REQUIRED` + `connectUrl` if the grant predates the `zone-settings.write` scope
+- `POST /cloudflare/rollback/{domain}` — undo: nameservers back to Porkbun (the Cloudflare zone is left alone; deleting it is the customer's call)
+
+*Two DNS surfaces:* `/dns/*` manages **Porkbun's** nameservers; `/cloudflare/*Record` manages the customer's **Cloudflare** zone after a move. *Once a domain is connected, Porkbun DNS is no longer authoritative for it.* `/dns/*` writes still succeed against the Porkbun zone (kept in step in case you roll back) but do NOT change what resolves — those responses carry a `warnings` entry saying so. Read `/cloudflare/getRecords/{domain}` for what Cloudflare actually serves. Subscribe to `cloudflare.connect.completed` / `cloudflare.connect.failed` webhooks instead of polling.
+
+*Queue status values:* `queued` → `working` → `setup` → `activating` → `connected`/`done`; terminal states are `connected`/`done`, `skipped`, `failed`/`error` and `undone`. **Neither `setup` nor `activating` is terminal** — in `setup` the zone exists in the customer's Cloudflare account but Cloudflare has not provisioned it yet and the nameservers have NOT been touched (the domain still resolves from Porkbun); in `activating` the nameservers are already repointed and Cloudflare is confirming the zone, which is legitimately slow (registry + resolver propagation, allow up to 72h — 59h has been observed on a move that then succeeded). Keep polling. If the domain **stops resolving** while Cloudflare has not activated it, that is not waited out: its nameservers go back to Porkbun within minutes and the row is reported `undone`. A `failed` row that was waiting on Cloudflare is re-checked for up to 30 days, so a late activation still ends up reported as connected rather than staying failed. **A big batch paces itself:** zone creation stops while the customer's Cloudflare account has several domains still awaiting activation (Cloudflare refuses to add more, and cannot be hurried), so rows can sit in `queued` with a message explaining the wait — that is not a stall to retry around.
+
+*Semantics that trip agents up:* `skipped` is a NORMAL outcome, not an error — DNSSEC live, custom nameservers, already connected each come back per-domain with a reason, so read the reasons instead of treating a non-empty `skipped` as failure. Eligibility is re-checked immediately before each domain is acted on, so a domain accepted at queue time can still be skipped later. Re-submitting a domain is safe and idempotent. Limits: 500 domains per call, 2000 per account per hour. Not available with sandbox keys (a real Cloudflare grant can't be simulated).
+
+### Hosting — two products share these endpoints
+Pick the product with the `sku` you pass to `/hosting/create`: **Secure Static Hosting** (`PIXIESECURESTATIC…`, you upload files) or **Cloud for WordPress** (`CLOUDWORDPRESS…`, a managed WordPress site you drive through WordPress). Either way the domain's first provision is a 15-day free trial that auto-renews at the plan price; one free trial per domain.
+
+*Both products:*
+- `GET/POST /hosting/plans` — list API-provisionable plans for both products (SKU, price, interval, trial length, features); the `product` field says which is which
+- `POST /hosting/create/{domain}` — provision by `sku`. Requires `acknowledgedCost` + `agreeToTerms`; gates the nameserver switch behind `agreeToNameserverChange`; `dryRun`-able. For a WordPress sku the response includes `wordpress.restUrl` / `adminUrl`
+- `GET /hosting/get/{domain}` — status (product, plan, trial, expiry, auto-renew); poll until `ACTIVE` after provisioning
+- `POST /hosting/delete/{domain}` — deprovision
+
+*Secure Static Hosting only* (a WordPress site returns `NOT_SUPPORTED_FOR_PRODUCT`):
+- `POST /hosting/deploy/{domain}` — upload site files (base64, ≤10MB/call; directories in a path are auto-created)
+- `GET/POST /hosting/files/{domain}` , `POST /hosting/makeDir/{domain}` , `POST /hosting/deleteFile/{domain}` — list files, create a directory, delete a file
+
+*Rate limits:* 10 provisions per account per hour, 20 WordPress credential mints per account per hour (`dryRun` calls are free). Per-key domain allowlists apply to every `/hosting/*` call, so a scoped key can only touch its own domains.
+
+*Cloud for WordPress only:*
+- `POST /hosting/createWpCredentials/{domain}` — mint a WordPress **Application Password** (returned once) so an agent can drive the site via `https://{domain}/wp-json/` with HTTP Basic. Defaults to a dedicated least-privilege `editor` user; `role: "administrator"` (full control, can install plugins = run code) requires `acknowledgeFullAccess: true`
+- `GET /hosting/getWpCredentials/{domain}` — list application passwords (metadata only; the passwords can't be re-read)
+- `POST /hosting/deleteWpCredentials/{domain}` — revoke by `uuid`, or `all: true`
+- `POST /sandbox/topup` , `POST /sandbox/reset` , `POST /sandbox/triggerWebhook` — sandbox only (pk1_sb_ keys): add fake credit / reset to a clean slate / fire a sample webhook event to your endpoints
+- `GET /mock` , `GET|POST /mock/<path>` — credential-free mock server: schema-accurate example responses for any endpoint (append `?status=error` for the error shape)
+
+## Error codes (selection)
+- `NOT_SUPPORTED_FOR_PRODUCT` — wrong hosting product for this endpoint
+- `PREVIEW_SITE_NOT_SUPPORTED` — free preview sites aren't API-managed
+- `CLOUDFLARE_NOT_CONNECTED` — no active Cloudflare grant; the owner must authorize in a browser, then poll `/cloudflare/getConnection`
+- `NOT_QUEUED` — that domain has never been queued for a Cloudflare move
+- `TOO_MANY_DOMAINS` — more than 500 domains in one `/cloudflare/connect` call
+- `CLOUDFLARE_REAUTHORIZE_REQUIRED` — the stored Cloudflare grant lacks the permission for that call; the owner reconnects at the returned `connectUrl`
+- `FULL_ACCESS_ACKNOWLEDGMENT_REQUIRED` — admin role needs acknowledgeFullAccess
+- `WP_CLI_FAILED` — the WordPress site rejected the command
+
+- `INVALID_API_KEYS_001` — the public `apikey` is invalid/unknown
+- `INVALID_API_KEYS_002` — the public key is valid but the `secretapikey` doesn't match
+- `MISSING_SECRETAPIKEY` — no secret supplied (common cause: the field was named `secretkey` instead of `secretapikey`)
+- `IP_NOT_ALLOWED` / `DOMAIN_NOT_ALLOWED` — request outside this key's allowlist
+- `IDEMPOTENCY_KEY_MISMATCH` / `IDEMPOTENCY_KEY_IN_USE` — idempotency conflicts
+- `SANDBOX_UNSUPPORTED` — this endpoint (e.g. hosting/email) isn't simulated in the sandbox; use a live key
+- `RATE_LIMIT_EXCEEDED` — HTTP 429; wait the seconds in the `Retry-After` header (also `ttlRemaining` / `X-RateLimit-Reset`)
+- `MONTHLY_SPEND_LIMIT_EXCEEDED` — would exceed the account's API spend cap
+- `INSUFFICIENT_FUNDS` — not enough account credit
+- `DOMAIN_NOT_FOUND` / `INVALID_DOMAIN` — domain not in your account / invalid
+- `INVALID_TYPE` — unsupported DNS record type
+
+## API specification
+
+- OpenAPI 3.0 spec: https://porkbun.com/api/json/v3/spec
+- Full Markdown reference (no JS): https://porkbun.com/llms-full.txt
+- Per-topic Markdown docs (index): https://porkbun.com/llms (e.g. /llms/dns, /llms/webhooks)
+- Guides (task-oriented how-tos): https://porkbun.com/llms/guides (getting-started, register-a-domain, dynamic-dns, verify-a-webhook)
+- Documentation home (all formats): https://porkbun.com/api/json/v3/documentation
+- Interactive reference: https://porkbun.com/api/json/v3/documentation/interactive
+- Base URL: https://api.porkbun.com/api/json/v3
+- IPv4-only base URL: https://api-ipv4.porkbun.com/api/json/v3 (force IPv4 from an IPv6 network)
+
+## nTLDData — new gTLD statistics (separate site, also run by Porkbun)
+
+https://ntlddata.com — daily statistics for the new generic top-level domains: domain counts, registrar market share, registry operators, registry backends, DNSSEC adoption and root-zone delegations, built entirely from ICANN and IANA public data. Free to read and cite (CC BY 4.0), with a free unauthenticated JSON API at https://ntlddata.com/api (no key, no signup).
+
+This is a data-publishing site, not part of the Porkbun API — nothing there is account-specific and none of it requires a Porkbun key. Use it to answer questions about how large a TLD is, who operates or backends it, or how registrar market share is moving; use the Porkbun API above to actually check availability, price, or register a name.
+
+Read https://ntlddata.com/llms.txt before citing any figure from it. Two caveats are easy to get wrong: (1) domain counts are refreshed daily from zone files, but every registrar figure comes from ICANN's monthly registry reports published ~3 months in arrears, so cite the month it is stamped with, not today's date; (2) the site covers new gTLDs only — not .com/.net/.org and not ccTLDs.
+
+## Links
+
+- Homepage: https://porkbun.com
+- Domain pricing (all TLDs): https://porkbun.com/products/domains
+- Create API keys: https://porkbun.com/account/api
+- MCP server: https://github.com/oborseth/Porkbun-MCP
+- Support: https://porkbun.com/support
+- New gTLD statistics (Porkbun-run, free JSON API): https://ntlddata.com and https://ntlddata.com/llms.txt

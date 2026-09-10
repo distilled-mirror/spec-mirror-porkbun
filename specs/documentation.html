@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Porkbun API Documentation — domains, DNS, SSL &amp; hosting for developers and AI agents</title>
+  <meta name="description" content="The Porkbun API (v3.19) is a developer- and agent-friendly REST API to register, renew, transfer and manage domains, DNS &amp; DNSSEC, SSL certificates, email forwarding, the marketplace, static and WordPress hosting, Cloudflare connect, and outbound webhooks — with machine-readable errors, idempotency keys, a full OpenAPI spec, an official MCP server, and an isolated sandbox.">
+  <link rel="canonical" href="https://porkbun.com/api/json/v3/documentation">
+  <meta name="robots" content="index, follow">
+  <!-- Open Graph / Twitter for shareable, SEO-friendly previews -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Porkbun API — domains, DNS, SSL &amp; hosting for developers and AI agents">
+  <meta property="og:description" content="Register and manage domains, DNS, SSL, hosting and more over a clean REST API built for automation and AI agents. OpenAPI spec, official MCP server, and a free sandbox.">
+  <meta property="og:url" content="https://porkbun.com/api/json/v3/documentation">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Porkbun API — built for developers &amp; AI agents">
+  <meta name="twitter:description" content="Domains, DNS, SSL, hosting, webhooks — a REST API with an OpenAPI spec, official MCP server, and a free sandbox.">
+  <!-- Machine-readable alternates so non-JS clients (LLMs/agents/crawlers) find real content. -->
+  <link rel="alternate" type="application/json" title="OpenAPI spec" href="/api/json/v3/spec">
+  <link rel="alternate" type="text/markdown" title="Full Markdown API reference" href="/llms-full.txt">
+  <link rel="alternate" type="text/markdown" title="Per-topic Markdown docs (index)" href="/llms">
+  <link rel="alternate" type="text/plain" title="LLM-friendly API overview" href="/llms.txt">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "APIReference",
+    "name": "Porkbun API",
+    "abstract": "REST API to register and manage domains, DNS, DNSSEC, SSL, email forwarding, marketplace, static hosting, and webhooks.",
+    "url": "https://porkbun.com/api/json/v3/documentation",
+    "softwareVersion": "3.19",
+    "provider": { "@type": "Organization", "name": "Porkbun, LLC", "url": "https://porkbun.com" },
+    "programmingModel": "REST/JSON",
+    "documentation": "https://porkbun.com/api/json/v3/spec"
+  }
+  </script>
+  <style>
+    :root{
+      --pink:#EF7878;      /* brand — decoration, fills, rules. Never text on white */
+      --pink-lg:#d85f5f;   /* large display text — 3.67:1 */
+      --link:#b8474a;      /* links, small text, focus ring, solid buttons — 5.20:1 */
+      --ink:#1c1c1e;
+      --muted:#5f5f66;
+      --line:#e9e6e6;
+      --bg:#fff;
+      --soft:#fdf6f6;
+      --machine:#17171b;   /* the "machine speaks" surface */
+      --machine-line:#2b2b33;
+      --machine-dim:#8a8a99;
+      --machine-key:#f4a3a3;
+      --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+      --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+      --wrap:940px;
+      --r-sm:8px; --r-md:10px; --r-lg:14px;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:var(--sans);line-height:1.6;color:var(--ink);background:var(--bg)}
+    a{color:var(--link);font-weight:600;text-decoration:none}
+    a:hover{text-decoration:underline}
+    :focus-visible{outline:3px solid var(--link);outline-offset:2px;border-radius:4px}
+    code{font-family:var(--mono)}
+    .wrap { max-width:var(--wrap); margin:0 auto; padding:0 20px; }
+    code { background:#f4f4f5; padding:1px 6px; border-radius:5px; font-size:0.9em; }
+    /* brand bar */
+    .brand { border-bottom:1px solid var(--line); }
+    .brand .wrap { display:flex; align-items:center; justify-content:space-between; padding-top:14px; padding-bottom:14px; }
+    .brand .logo { font-weight:800; font-size:1.15rem; color:var(--ink); display:inline-flex; align-items:center; }
+    .brand .logo img { height:30px; width:auto; display:block; margin-right:9px; }
+    .brand .logo span { color:var(--link); margin-left:7px; }
+    .brand .meta { color:var(--muted); font-size:0.9rem; font-weight:600; }
+    .brand .meta a { margin-left:14px; }
+    /* hero */
+    .hero { background:var(--soft); border-bottom:1px solid var(--line); padding:48px 0 40px; }
+    .hero h1 { font-size:2.1rem; line-height:1.15; margin:0 0 10px; letter-spacing:-.02em; }
+    .hero h1 em { font-style:normal; color:var(--pink-lg); }
+    .hero p { font-size:1.12rem; color:var(--muted); margin:0 0 18px; max-width:680px; }
+    .base { display:inline-block; background:#fff; border:1px solid var(--line); border-radius:var(--r-md); padding:8px 12px; font-size:0.95rem; }
+    .base b { color:var(--muted); font-weight:600; margin-right:6px; }
+    section { padding:36px 0; border-bottom:1px solid var(--line); }
+    section h2 { font-size:1.35rem; margin:0 0 6px; }
+    section > .wrap > p.sub { color:var(--muted); margin:0 0 22px; }
+    /* capability grid */
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:14px; }
+    .card { border:1px solid var(--line); border-radius:var(--r-md); padding:14px 16px; background:#fff; }
+    .card h3 { margin:0 0 4px; font-size:1rem; }
+    .card p { margin:0; color:var(--muted); font-size:0.9rem; }
+    /* two-column feature lists */
+    .cols { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:8px 28px; }
+    .cols div { padding:2px 0 2px 15px; border-left:2px solid var(--pink); }
+    .cols strong { display:block; }
+    .cols span { color:var(--muted); font-size:0.92rem; }
+    /* reference links */
+    ul.links { list-style:none; padding:0; margin:0; }
+    ul.links li { margin:14px 0; }
+    ul.links .desc { display:block; color:var(--muted); font-weight:400; font-size:0.92rem; margin-top:2px; }
+    .cta { display:inline-block; margin-top:18px; background:var(--link); color:#fff; padding:10px 18px; border-radius:8px; font-weight:700; }
+    .cta { border-radius:var(--r-sm); }
+    .cta:hover { text-decoration:none; opacity:0.92; }
+    footer { padding:28px 0 60px; color:var(--muted); font-size:0.9rem; }
+    footer .wrap > p { margin:6px 0; }
+  </style>
+</head>
+<body>
+
+  <header class="brand">
+    <div class="wrap">
+      <div class="logo"><img src="/images/porkbun.comphpPkl2eU.svg" alt="Porkbun">porkbun<span>API</span></div>
+      <div class="meta">v3.19<a href="/">porkbun.com</a></div>
+    </div>
+  </header>
+
+  <div class="hero">
+    <div class="wrap">
+      <h1>The domain API built for developers &amp; <em>AI agents</em></h1>
+      <p>A clean REST/JSON API to register, renew, transfer and fully manage domains — plus DNS &amp; DNSSEC, SSL certificates, email forwarding, the aftermarket, static and WordPress hosting, Cloudflare connect, and signed webhooks. Machine-readable errors, idempotency keys, an OpenAPI spec, a first-party MCP server, and a free sandbox make it a great fit for automation and autonomous agents.</p>
+      <div class="base"><b>Base URL</b><code>https://api.porkbun.com/api/json/v3</code></div>
+    </div>
+  </div>
+
+  <section>
+    <div class="wrap">
+      <h2>What you can do</h2>
+      <p class="sub">Everything in the Porkbun dashboard, over the API.</p>
+      <div class="grid">
+        <div class="card"><h3>Domains</h3><p>Check availability &amp; pricing, register, renew, transfer-in, and list/manage every domain in the account.</p></div>
+        <div class="card"><h3>Porkbun DNS &amp; DNSSEC</h3><p>Full CRUD over records (A, AAAA, CNAME, MX, TXT, SRV, CAA, ALIAS, …) and DNSSEC DS records on Porkbun's nameservers.</p></div>
+        <div class="card"><h3>SSL certificates</h3><p>Retrieve the free Porkbun-issued SSL bundle for any domain in the account.</p></div>
+        <div class="card"><h3>Nameservers &amp; glue</h3><p>Read/replace nameservers and manage glue (host) records at the registry.</p></div>
+        <div class="card"><h3>Domain contacts</h3><p>Read and edit registrant/admin/tech/billing contacts, with per-TLD validation.</p></div>
+        <div class="card"><h3>URL forwarding</h3><p>Create and manage 301/302/masked URL forwards for a domain.</p></div>
+        <div class="card"><h3>Email forwarding</h3><p>Route mail on your domains to existing inboxes.</p></div>
+        <div class="card"><h3>Marketplace</h3><p>Browse the Porkbun aftermarket with server-side filters.</p></div>
+        <div class="card"><h3>Secure Static Hosting</h3><p>Provision hosting and deploy a static site end-to-end — no dashboard.</p></div>
+        <div class="card"><h3>WordPress hosting</h3><p>Provision a managed <strong>Cloud for WordPress</strong> site, then mint WordPress REST API credentials so an agent can publish and manage content on it.</p></div>
+        <div class="card"><h3>Official MCP server</h3><p><code>npx @porkbunllc/mcp-server</code> — 81 tools for Claude, Cursor and any MCP client. See <a href="/mcp">porkbun.com/mcp</a>.</p></div>
+        <div class="card"><h3>Cloudflare connect</h3><p>Move domains into the customer's <strong>own Cloudflare account</strong> — create the zone, copy the DNS across, repoint nameservers — then manage those Cloudflare records, the orange cloud, and zone settings from the same API.</p></div>
+        <div class="card"><h3>Outbound webhooks</h3><p>Get signed, real-time events (registrations, renewals, transfers, DNS changes) instead of polling.</p></div>
+        <div class="card"><h3>Sandbox / test mode</h3><p>A <code>pk1_sb_</code> key runs the whole API in an isolated environment with fake credit — no real actions or charges, and signed webhooks are delivered too.</p></div>
+        <div class="card"><h3>Mock server</h3><p>Schema-accurate example responses for any endpoint at <code>/mock/&lt;path&gt;</code> — no credentials, nothing to install.</p></div>
+        <div class="card"><h3>Spend controls</h3><p>Per-account monthly limits, low-balance alerts, and auto top-up on API spend.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>How it works</h2>
+      <p class="sub">Simple, predictable, and safe to automate.</p>
+      <div class="cols">
+        <div><strong>Authentication</strong><span>Pass <code>X-API-Key</code>/<code>X-Secret-API-Key</code> headers, or <code>apikey</code>/<code>secretapikey</code> in the JSON body. Keys work whether or not account 2FA is enabled.</span></div>
+        <div><strong>REST / JSON</strong><span>HTTPS only. Reads accept GET; writes are POST with a JSON body. Every response has a stable <code>status</code>.</span></div>
+        <div><strong>Idempotency</strong><span>Send <code>Idempotency-Key</code> on any write; retries within 24h replay the original response — no double-charging.</span></div>
+        <div><strong>Dry run</strong><span>Pass <code>dryRun: true</code> to rehearse a billable or destructive write (price, funds, eligibility) without performing it.</span></div>
+        <div><strong>Versioning</strong><span>Every response carries <code>X-API-Version</code> (currently 3.19). The path stays <code>/v3</code>; minor bumps are backward-compatible.</span></div>
+        <div><strong>Request IDs</strong><span>An <code>X-Request-Id</code> header + <code>requestId</code> body field (UUIDv7) on every response for retries, logs, and support.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Built for AI agents</h2>
+      <p class="sub">Agent-safety features so autonomous callers can act confidently.</p>
+      <div class="cols">
+        <div><strong>Machine-readable errors</strong><span>Every error has a stable <code>code</code> plus a <code>next_action</code> object telling an agent how to recover (re-quote, add funds, enable a setting, …).</span></div>
+        <div><strong>Registration requirements as JSON Schema</strong><span><code>GET /domain/getRegistrationRequirements/{tld}</code> returns the create payload and registry eligibility fields upfront.</span></div>
+        <div><strong>Per-key scoping</strong><span>Restrict a key to specific source IPs (CIDR) and/or specific domains — hand an agent a least-privilege key.</span></div>
+        <div><strong>Rate-limit signalling</strong><span><code>X-RateLimit-*</code> headers on rate-limited endpoints.</span></div>
+        <div><strong>Spec self-discovery</strong><span>Every response carries a <code>Link: rel="describedby"</code> pointer to the OpenAPI spec.</span></div>
+        <div><strong>Free sandbox</strong><span>A <code>pk1_sb_</code> key runs the full lifecycle against an isolated sandbox with fake credit — responses include <code>"sandbox": true</code>.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Official MCP server</h2>
+      <p class="sub">The fastest way to give an AI agent Porkbun superpowers.</p>
+      <p>Porkbun ships a first-party <a href="https://modelcontextprotocol.io">Model Context Protocol</a> server exposing the whole API as native tools for Claude Desktop, Cursor, Cline, and other MCP clients. Write tools auto-attach an idempotency key, and the same server also grounds an agent in these docs (<code>search_docs</code>, <code>read_doc</code>, <code>list_doc_topics</code>) — no separate docs server needed.</p>
+      <p><code>npx -y @porkbunllc/mcp-server</code> &nbsp;·&nbsp; <a href="/mcp">Setup guide &amp; tool list</a> &nbsp;·&nbsp; <a href="https://github.com/oborseth/Porkbun-MCP">GitHub</a> &nbsp;·&nbsp; <a href="/llms/agent-setup">paste-to-install agent setup prompt</a></p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Reference &amp; formats</h2>
+      <p class="sub">Pick the format that fits your client — all kept in sync from one spec.</p>
+      <ul class="links">
+        <li><a href="/api/json/v3/spec">OpenAPI 3.0 spec (JSON)</a><span class="desc">Machine-readable spec for client/tool generation; linked from every response via <code>Link: rel="describedby"</code>.</span></li>
+        <li><a href="/llms/domain">Per-TLD registration requirements (JSON Schema)</a><span class="desc"><code>GET /domain/getRegistrationRequirements/{tld}</code> returns whether a TLD is API-registerable and the create payload as JSON Schema — including registry eligibility fields like <code>.us</code> nexus or <code>.ca</code> legal type. Validate a registration before sending it.</span></li>
+        <li><a href="/llms-full.txt">Full reference (Markdown)</a><span class="desc">Every endpoint, parameter, and example in one flat, no-JavaScript file.</span></li>
+        <li><a href="/llms">Per-topic docs (Markdown index)</a><span class="desc">One page per area — e.g. <a href="/llms/dns">/llms/dns</a>, <a href="/llms/webhooks">/llms/webhooks</a>, <a href="/llms/domain">/llms/domain</a>, <a href="/llms/sandbox">/llms/sandbox</a>.</span></li>
+        <li><a href="/llms/guides">Guides (how-tos)</a><span class="desc">Task walkthroughs: <a href="/llms/guides/getting-started">getting started</a>, <a href="/llms/guides/register-a-domain">register a domain</a>, <a href="/llms/guides/dynamic-dns">dynamic DNS</a>, <a href="/llms/guides/verify-a-webhook">verify a webhook</a>, <a href="/llms/guides/publish-to-wordpress">provision WordPress &amp; publish</a>, <a href="/llms/guides/move-domains-to-cloudflare">move domains to Cloudflare</a>.</span></li>
+        <li><a href="/llms.txt">LLM overview (llms.txt)</a><span class="desc">Short orientation: what the API does, agent-safety features, quickstart, and key endpoints.</span></li>
+        <li><a href="/llms/agent-setup">Agent setup prompt</a><span class="desc">Paste into your AI coding agent (Claude Code, Cursor, Cline, …) and it installs the MCP, obtains &amp; scopes credentials, and verifies — automatically.</span></li>
+        <li><a href="/api/json/v3/documentation/interactive">Interactive reference</a><span class="desc">Browse and try endpoints in the browser (requires JavaScript).</span></li>
+      </ul>
+      <a class="cta" href="/api/json/v3/documentation/interactive">Open the interactive reference →</a>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Get started</h2>
+      <p class="sub">Create keys, then make your first call.</p>
+      <ul class="links">
+        <li><a href="/account/api">Create API keys</a><span class="desc">Generate and manage keys, per-key IP/domain restrictions, spend controls, webhooks — and free <strong>sandbox</strong> keys for testing.</span></li>
+        <li><a href="/account/api">Sandbox keys</a><span class="desc">A <code>pk1_sb_</code> key exercises the full API in an isolated environment — same base URL, no real actions or charges.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <p>Authenticate with <code>X-API-Key</code> / <code>X-Secret-API-Key</code> headers, or <code>apikey</code> / <code>secretapikey</code> in the JSON body. API keys work whether or not account two-factor authentication is enabled.</p>
+      <p><a href="/">Porkbun</a> &nbsp;·&nbsp; <a href="/tlds">TLD pricing</a> &nbsp;·&nbsp; <a href="/support">Support</a> &nbsp;·&nbsp; <a href="/mcp">MCP server</a></p>
+    </div>
+  </footer>
+
+</body>
+</html>
