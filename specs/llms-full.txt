@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.19
+# Porkbun API v3 — v3.22
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -148,6 +148,20 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 |------|---------|
 | `INVALID_TYPE` | DNS record type is not supported |
 | `INVALID_RECORD_ID` | DNS record ID was not found or is not owned by your account |
+| `DUPLICATE_RECORD` | A record with this exact name, type and content already exists, so nothing was created. The existing record's id is returned in `existingId` — adopt it rather than creating another. HTTP 400. |
+| `NOTHING_TO_IMPORT` | `/dns/import` had no records supplied and could discover none. Once a domain has left its old registrar its published records can no longer be read, so they must be supplied explicitly. HTTP 400. |
+| `TOO_MANY_RECORDS` | More than 500 records in one `/dns/import` call. HTTP 400. |
+| `TRANSFER_INIT_FAILED` | The transfer could not be started; the order is refunded automatically. Not a credentials or verification problem. HTTP 400. |
+| `TRANSFER_HOLD_NOT_AVAILABLE` | `holdForDnsSetup` is not supported for this TLD (.uk, Handshake). Nothing was charged; resend without the flag. |
+| `TRANSFER_NOT_FOUND` | No pending inbound transfer for that domain on this account. |
+| `TRANSFER_NOT_HELD` | `/domain/startTransfer` on a transfer that is not held at `PENDINGDNS`. |
+| `TRANSFER_ZONE_EMPTY` | Releasing would move the domain to an empty Porkbun zone. Import the records first, or resend with `force: true`. |
+| `TRANSFER_ZONE_FAILED` | The DNS zone could not be created for a held transfer. |
+| `TRANSFER_NOT_CANCELLABLE`, `TRANSFER_ALREADY_COMPLETED` | The transfer is past the point where it can be cancelled. |
+| `TRANSFER_STATE_UNCONFIRMED` | The registry would not confirm the withdrawal, so nothing was refunded and the transfer was left intact. Deliberate: better an unrefunded cancel than a refunded live transfer. |
+| `TRANSFER_NOT_REPAIRABLE` | The transfer is not in a state where replacing the auth code helps. |
+| `INVALID_AUTH_CODE` | The replacement auth code was rejected by the registry, so it was not stored. |
+| `RECORD_CONFLICT` | The record cannot coexist with what is already at that name: a CNAME is exclusive of every other type there (RFC 1034). The blocking records are listed in `conflictingRecords`. HTTP 400. |
 
 **Cloudflare connect**
 
@@ -300,6 +314,27 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.22
+
+- **Fixed: a domain could only ever be transferred in once through the API.** `transfers_in` is unique on (domain, transfer_id) and this path passed a literal `0`, so the first API transfer of a domain claimed that pair permanently and every later attempt failed with a bare "Unable to initiate transfer." — including a legitimate retry after fixing whatever the losing registrar objected to. It now mints a transfer batch id the way the website does. Previously-blocked domains are freed without any change to their records.
+- Both failure paths now return **`TRANSFER_INIT_FAILED`** with a `next_action`, and say the order was refunded automatically and that the cause is not credentials or account verification.
+- **Documented the no-downtime transfer flow, which was live but absent from this spec**: `holdForDnsSetup` on `/domain/transfer`, plus `/domain/getTransferSetup/{domain}`, `/domain/prepareTransfer/{domain}`, `/domain/startTransfer/{domain}`, `/domain/cancelTransfer/{domain}` and `/domain/updateTransferAuthCode/{domain}`. Hold the transfer, build the zone, import the records, then release — so the domain never moves to an empty zone.
+
+### v3.21
+
+- **`GET /dns/scan/{domain}` and `POST /dns/import/{domain}`: keep DNS working through a registrar transfer.** A transfer moves the delegation only, so the losing registrar's records vanish the moment it stops answering for the zone — and a domain whose records were never recreated goes dark right then. `/dns/scan` reads what a domain currently publishes while its old nameservers still answer. `/dns/import` bulk-creates records, either from an exact list you supply or from a scan, and is idempotent: records that already exist come back as `skipped` rather than failures, so it is safe to re-run.
+- Porkbun now also snapshots a pending inbound transfer's published zone automatically and restores it once the transfer completes, if the Porkbun zone is still empty at that point. A zone somebody has already populated is never overwritten.
+
+### v3.20
+
+- **`/dns/create` no longer reports SUCCESS for a record it refused to create.** A refusal from the DNS layer was being written into the `id` field while the status stayed `SUCCESS`, so a duplicate returned `{"status":"SUCCESS","id":{"error":1,"message":"..."}}` — `id` is documented as a string. Every refusal now returns HTTP 400 with a proper code. This also fixes the more serious case of the same bug: a CNAME conflict (RFC 1034) was detected, the write refused, and `SUCCESS` returned anyway.
+- **New `DUPLICATE_RECORD`**, which carries `existingId` — the id of the record that already holds that exact name/type/content — so you can adopt it without a second lookup.
+- **New `RECORD_CONFLICT`**, which carries `conflictingRecords` (id, name, type, content) for the records that block the write.
+- **`/dns/edit` and `/dns/editByNameType` no longer fail when the record already matches.** Re-applying the current values reported "We were unable to edit the DNS record" because the underlying UPDATE changed no rows. A no-op edit is now a success, so converge loops that write desired state unconditionally work.
+- Documented that nameservers are an **unordered set**: `/domain/getNs` reads live from the registry and the registry may return them in any order, so it will not necessarily echo the order sent to `/domain/updateNs`.
+
+_Thanks to David Lazar, who reported the `/dns/create` response shape and the nameserver ordering question while building a Terraform provider._
 
 ### v3.19
 
@@ -889,6 +924,7 @@ Request body fields:
 |---|---|---|---|
 | `authCode` | string | yes | The EPP auth code for the domain. |
 | `cost` | integer | yes | The transfer cost in cents as returned by the pricing API. Must match exactly. |
+| `holdForDnsSetup` | boolean | no | Charge the transfer but hold it at `PENDINGDNS` instead of releasing it to the registry, so the DNS zone can be built before the domain moves. This is the no-downtime path: hold, then `POST /domain/prepareTransfer/{domain}`, then load records with `/dns/import/{domain}`, then `POST /domain/startTransfer/{domain}`. Nothing releases a held transfer on a timer. Not available for .uk or Handshake TLDs, which return `TRANSFER_HOLD_NOT_AVAILABLE` and are not charged. |
 | `dryRun` | boolean | no | Optional. When true, runs all pre-flight validation and returns a preview with `dryRun: true` and `wouldSucceed` WITHOUT initiating the transfer or charging. Nothing changes and the rate-limit budget is not consumed. |
 
 ```bash
@@ -938,6 +974,136 @@ Response fields (DryRunPreviewResponse):
 | `withinMonthlySpendLimit` | boolean | Whether this cost stays within the monthly cap. Present only if a cap is configured. |
 | `message` | string | Human-readable summary of the preview outcome. |
 | `requestId` | string | Per-request UUID (also in the X-Request-Id header). Present on every API response. |
+
+## GET /api/json/v3/domain/getTransferSetup/{domain}
+
+**State of an in-flight inbound transfer**
+
+Where a pending inbound transfer is and what it is waiting on: whether it is held at `PENDINGDNS`, whether its DNS zone exists, how many records are in it, what the domain currently delegates to, and the next step to take. Use it to resume a no-downtime transfer without keeping state of your own.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes | Domain name. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `transfer` | object |  |
+| `held` | integer |  |
+| `zoneReady` | integer |  |
+| `recordCount` | integer |  |
+| `delegation` | object |  |
+| `dnssec` | integer |  |
+| `nextStep` | object |  |
+| `porkbunNameservers` | string[] |  |
+
+## POST /api/json/v3/domain/prepareTransfer/{domain}
+
+**Create the DNS zone for a held transfer**
+
+Create the Porkbun DNS zone for a domain whose inbound transfer is held at `PENDINGDNS`, so records can be added **before** the domain moves. The zone is created deliberately rather than as a side effect of the first record write. Returns the Porkbun nameservers to point the domain at. Then load the zone with `/dns/import/{domain}` (or the `/dns/*` endpoints) and release with `/domain/startTransfer/{domain}`. Supports `dryRun`.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes | Domain name. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `zoneReady` | boolean |  |
+| `recordCount` | integer |  |
+| `message` | string |  |
+| `porkbunNameservers` | string[] |  |
+
+## POST /api/json/v3/domain/startTransfer/{domain}
+
+**Release a held transfer to the registry**
+
+Release a transfer held at `PENDINGDNS` into the registry pipeline. Nothing releases a held transfer on a timer — this call is the only thing that does.
+
+Refuses with `TRANSFER_ZONE_EMPTY` if the zone has no records, which is the outage the hold exists to prevent. Pass `force: true` only if the domain genuinely needs no DNS at Porkbun. Supports `dryRun`.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes | Domain name. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `force` | boolean | no | Release even though the zone is empty. Use only when the domain needs no DNS here. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `message` | string |  |
+
+## POST /api/json/v3/domain/cancelTransfer/{domain}
+
+**Cancel an inbound transfer and refund it**
+
+Cancel a pending inbound transfer and refund the order. The sequence is deliberate: mark the transfer cancelled locally, withdraw it at the registry, **verify** the registry actually accepted the withdrawal, and only then refund. If the registry state cannot be confirmed the local row is restored and `TRANSFER_STATE_UNCONFIRMED` is returned rather than refunding a transfer that may still be live.
+
+The response reports `withdrawnAtRegistry`, `registryResultCode`, `refunded` and `refundAmount` so you can see exactly how far it got. Supports `dryRun`.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes | Domain name. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `cancelled` | boolean |  |
+| `previousStatus` | string |  |
+| `transferStatus` | string |  |
+| `withdrawnAtRegistry` | boolean |  |
+| `registryResultCode` | string |  |
+| `registryCode` | string |  |
+| `refunded` | boolean |  |
+| `refundAmount` | integer |  |
+| `orderId` | integer |  |
+| `message` | string |  |
+
+## POST /api/json/v3/domain/updateTransferAuthCode/{domain}
+
+**Replace the auth code on a stuck transfer**
+
+Replace the authorization code on an inbound transfer that stalled because the code was wrong, and re-queue it — instead of cancelling, refunding and re-submitting.
+
+The new code is validated against the registry before it is stored, so a bad code is rejected here (`INVALID_AUTH_CODE`) rather than failing again later. Only transfers in a repairable state qualify; anything else returns `TRANSFER_NOT_REPAIRABLE`. Supports `dryRun`.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes | Domain name. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `authCode` | string | yes | The replacement authorization code, exactly as the losing registrar issued it. Never interpolate this into a shell command. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `authCodeValid` | boolean |  |
+| `previousStatus` | string |  |
+| `transferStatus` | string |  |
+| `message` | string |  |
 
 ## GET /api/json/v3/domain/getTransfer/{domain}
 
@@ -1148,7 +1314,7 @@ Response fields:
 
 **Get nameservers**
 
-Retrieve the authoritative nameservers listed at the registry for the domain. Supports both GET (with header auth) and POST (with body or header auth).
+Retrieve the authoritative nameservers listed at the registry for the domain. Supports both GET (with header auth) and POST (with body or header auth). **Nameservers are an unordered set.** This reads live from the registry, and registries are free to return the set in any order — so the order here will often differ from the order you sent to `/domain/updateNs`. Order carries no meaning in DNS (an NS RRset is unordered, RFC 1034/2181) and is not preserved by the parent zone. Compare nameservers as a set; if you are writing a Terraform provider or similar, model this as a set, not an ordered list, or every plan will show phantom drift.
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -1171,7 +1337,7 @@ Response fields:
 
 **Get nameservers**
 
-Retrieve the authoritative nameservers listed at the registry for the domain. Supports both GET (with header auth) and POST (with body or header auth).
+Retrieve the authoritative nameservers listed at the registry for the domain. Supports both GET (with header auth) and POST (with body or header auth). **Nameservers are an unordered set.** This reads live from the registry, and registries are free to return the set in any order — so the order here will often differ from the order you sent to `/domain/updateNs`. Order carries no meaning in DNS (an NS RRset is unordered, RFC 1034/2181) and is not preserved by the parent zone. Compare nameservers as a set; if you are writing a Terraform provider or similar, model this as a set, not an ordered list, or every plan will show phantom drift.
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -1197,7 +1363,7 @@ Response fields:
 
 **Update nameservers**
 
-Update the nameservers for the domain at the registry.
+Update the nameservers for the domain at the registry. The list you send is applied as a set — the registry may store and return it in a different order, so do not expect `/domain/getNs` to echo your ordering back. See `/domain/getNs`.
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -1840,6 +2006,62 @@ Response fields (BasicResponse):
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
+
+## GET /api/json/v3/dns/scan/{domain}
+
+**Discover the records a domain currently publishes**
+
+Query a domain's **live authoritative nameservers** and return the records they answer with, writing nothing. This is what makes an inbound transfer non-destructive: a transfer moves only the delegation — EPP carries no zone data — so once the losing registrar stops answering for the zone, whatever it published is gone and unrecoverable. Run this **before** the nameservers move, then pass the result to `/dns/import/{domain}`.
+
+The scan probes a wide list of well-known names (apex, common subdomains, MX, DKIM selectors, provider verification hosts) and consolidates wildcards. It cannot enumerate a zone — DNS has no listing operation and AXFR is universally refused — so treat it as thorough but **not exhaustive**. If the old registrar exposes the zone through its own API, that is authoritative: read it with your own credentials (they never need to reach Porkbun) and POST those records to `/dns/import` instead.
+
+Metered separately at 20 calls per hour per account, because each call is roughly 90 DNS lookups.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `recordCount` | integer |  |
+| `records` | object[] |  |
+
+## POST /api/json/v3/dns/import/{domain}
+
+**Bulk-create DNS records (transfer restore)**
+
+Create many records in one call, so a domain arriving from another registrar keeps resolving instead of going dark.
+
+Send `records` to import an exact list — the better path when the old registrar has an API you can read with your own credentials. Omit `records` entirely and whatever `/dns/scan/{domain}` can discover is imported instead.
+
+**Idempotent.** A record that already exists is counted in `skipped`, not `failed`, so this is safe to re-run and safe to use as a converge step. Records that fail individually are listed in `failures` while the rest still import; the call only errors outright if nothing was importable.
+
+Imported records do nothing until the domain actually points at the Porkbun nameservers — check `/domain/getNs/{domain}` and set them with `/domain/updateNs/{domain}`. Maximum 500 records per call. Supports `dryRun`.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `records` | array | no | Records to create. Omit to import what a scan discovers. NS and SOA entries are ignored — they describe the delegation, not the zone contents. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `created` | integer |  |
+| `skipped` | integer | Already present, so nothing needed doing. |
+| `failed` | integer |  |
+| `failures` | object[] |  |
 
 ## POST /api/json/v3/dns/getDnssecRecords/{domain}
 

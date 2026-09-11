@@ -105,6 +105,7 @@ Task-oriented walkthroughs. Prose, not generated from the spec — they cover th
 - Receive and verify webhooks: https://porkbun.com/llms/guides/verify-a-webhook
 - Verify a user owns a domain (DomainAttest): https://porkbun.com/llms/guides/verify-domain-ownership
 - Onboard a user in a mobile/native app (PKCE key handoff): https://porkbun.com/llms/guides/onboard-a-mobile-app-user
+- Migrate domains from GoDaddy to Porkbun (**beta**): https://porkbun.com/llms/godaddy-migration — end-to-end, agent-driven: inventory and eligibility via GoDaddy's API, DNS capture, priced dry runs, submission and tracking. Two steps need the human (removing WHOIS privacy, approving the transfer)
 
 Index: https://porkbun.com/llms/guides
 
@@ -119,10 +120,18 @@ Index: https://porkbun.com/llms/guides
 - `POST /domain/renew/{domain}` — renew
 - `POST /domain/transfer/{domain}` — initiate inbound transfer (needs `authCode`)
 - `GET /domain/getTransfer/{domain}` , `GET /domain/listTransfers` — transfer status
+- `POST /domain/transfer/{domain}` with `holdForDnsSetup: true` — **the no-downtime path**. Charges the transfer but parks it at `PENDINGDNS` instead of releasing it, so the zone can be built before the domain moves. Nothing releases a held transfer on a timer. Not available for .uk/Handshake (`TRANSFER_HOLD_NOT_AVAILABLE`, not charged)
+- `GET /domain/getTransferSetup/{domain}` — where a held transfer is and what it waits on (held? zone ready? record count? current delegation? next step)
+- `POST /domain/prepareTransfer/{domain}` — create the DNS zone for a held transfer; returns the Porkbun nameservers
+- `POST /domain/startTransfer/{domain}` — release a held transfer. Refuses on an empty zone (`TRANSFER_ZONE_EMPTY`) unless `force: true`
+- `POST /domain/cancelTransfer/{domain}` — cancel and refund. Marks locally, withdraws at the registry, **verifies** the withdrawal, then refunds; if the registry state can't be confirmed it restores the row and returns `TRANSFER_STATE_UNCONFIRMED` rather than refunding a possibly-live transfer
+- `POST /domain/updateTransferAuthCode/{domain}` — replace the auth code on a transfer that stalled on a bad one and re-queue it, instead of cancel/refund/resubmit. The new code is registry-validated before it is stored
 - `GET /domain/get/{domain}` — single domain detail
 - `GET/POST /domain/listAll` — list/filter domains (`?tlds[]=`, `?expiringWithinDays=`, `?autoRenew=`, `?apiAccess=`, `?nameContains=`, `?sortName=`, `?start=`)
 - `GET/POST /dns/retrieve/{domain}` — get DNS records
-- `POST /dns/create/{domain}` , `POST /dns/edit/{domain}/{id}` , `POST /dns/delete/{domain}/{id}` — manage DNS
+- `GET /dns/scan/{domain}` — discover what the domain currently publishes by querying its **live** nameservers; writes nothing. Run this BEFORE a transfer moves the nameservers, because a transfer carries no zone data and the old registrar's records become unreadable the moment it stops answering. Thorough but not exhaustive (DNS cannot list a zone; AXFR is refused). 20 calls/hour
+- `POST /dns/import/{domain}` — bulk-create records, either an exact `records` list you supply or whatever a scan finds. Idempotent: already-present records come back as `skipped`, not failures. Max 500/call. Records do nothing until the domain points at Porkbun's nameservers
+- `POST /dns/create/{domain}` , `POST /dns/edit/{domain}/{id}` , `POST /dns/delete/{domain}/{id}` — manage DNS. Creating a record that already exists with the same name/type/content returns HTTP 400 `DUPLICATE_RECORD` with the existing record's id in `existingId` (adopt it, don't retry); a write blocked by CNAME exclusivity returns `RECORD_CONFLICT` with the blocking rows in `conflictingRecords`. Editing a record to the values it already holds succeeds as a no-op, so you can write desired state unconditionally
 - `GET/POST /ssl/retrieve/{domain}` — SSL bundle
 - `GET /account/balance` — account credit balance
 - `GET /account/apiSettings` — spend-control settings + current month spend
@@ -155,6 +164,12 @@ We create the zone in their Cloudflare account, copy across the DNS records we h
 - `POST /cloudflare/createRecord/{domain}` , `POST /cloudflare/editRecord/{domain}/{recordId}` , `POST /cloudflare/deleteRecord/{domain}/{recordId}` — **write DNS in the zone that actually answers.** After a move these are the endpoints that change resolution; `/dns/*` does not. `name` takes `@` or a bare label, MX needs `priority`, `proxied` is A/AAAA/CNAME only, structured types (SRV/CAA) take a `data` object. All `dryRun`-able
 - `GET /cloudflare/getZoneSettings/{domain}` / `POST /cloudflare/setZoneSettings/{domain}` — allowlisted zone settings (`ssl`, `always_use_https`, `automatic_https_rewrites`, `min_tls_version`, `development_mode`, `cache_level`). Warns when `ssl` is `flexible`/`off` (Cloudflare fetches the origin over plain HTTP while visitors see a padlock). Returns `CLOUDFLARE_REAUTHORIZE_REQUIRED` + `connectUrl` if the grant predates the `zone-settings.write` scope
 - `POST /cloudflare/rollback/{domain}` — undo: nameservers back to Porkbun (the Cloudflare zone is left alone; deleting it is the customer's call)
+
+*The no-downtime transfer sequence:* submit with `holdForDnsSetup: true` → `POST /domain/prepareTransfer/{domain}` → `POST /dns/import/{domain}` → `POST /domain/startTransfer/{domain}`. Held transfers wait indefinitely for that last call, and it refuses to release into an empty zone. Note `/dns/*` will not accept a domain that is neither in the account nor covered by a pending transfer with a prepared zone — that is why the hold comes first.
+
+*A transfer does not carry DNS.* Registrar transfers move the delegation only — EPP has no concept of zone contents — so a domain whose records were never recreated at Porkbun goes dark the moment the losing registrar drops the zone. Capture with `GET /dns/scan/{domain}` **while the old nameservers still answer**, recreate with `POST /dns/import/{domain}`, and only then move the nameservers. Porkbun also snapshots a pending inbound transfer's zone on its own and restores it after the transfer completes if the Porkbun zone is still empty, but do not rely on that as the primary path — an explicit capture is exact, and a scan cannot enumerate a zone.
+
+*Nameservers are an unordered set.* `/domain/getNs` reads live from the registry, and registries return the set in whatever order they like — it will often differ from the order you sent to `/domain/updateNs`. Order is meaningless in DNS (NS is an RRset, RFC 1034/2181) and is not preserved by the parent zone, so compare nameservers as a set. Modelling them as an ordered list produces permanent false drift.
 
 *Two DNS surfaces:* `/dns/*` manages **Porkbun's** nameservers; `/cloudflare/*Record` manages the customer's **Cloudflare** zone after a move. *Once a domain is connected, Porkbun DNS is no longer authoritative for it.* `/dns/*` writes still succeed against the Porkbun zone (kept in step in case you roll back) but do NOT change what resolves — those responses carry a `warnings` entry saying so. Read `/cloudflare/getRecords/{domain}` for what Cloudflare actually serves. Subscribe to `cloudflare.connect.completed` / `cloudflare.connect.failed` webhooks instead of polling.
 
@@ -205,13 +220,21 @@ Pick the product with the `sku` you pass to `/hosting/create`: **Secure Static H
 - `INSUFFICIENT_FUNDS` — not enough account credit
 - `DOMAIN_NOT_FOUND` / `INVALID_DOMAIN` — domain not in your account / invalid
 - `INVALID_TYPE` — unsupported DNS record type
+- `TRANSFER_INIT_FAILED` — the transfer could not be started and the order was refunded automatically; **not** a credentials or verification problem
+- `TRANSFER_HOLD_NOT_AVAILABLE` — `holdForDnsSetup` unsupported for this TLD; nothing charged, resend without it
+- `TRANSFER_ZONE_EMPTY` — releasing would move the domain to an empty zone; import records first or pass `force: true`
+- `TRANSFER_STATE_UNCONFIRMED` — the registry would not confirm the cancellation, so nothing was refunded and the transfer was left intact
+- `DUPLICATE_RECORD` — that exact name/type/content already exists; nothing was created, and `existingId` holds the id of the record that does
+- `RECORD_CONFLICT` — a CNAME cannot share a name with any other record type (RFC 1034); `conflictingRecords` lists what blocks it
+- `NOTHING_TO_IMPORT` — `/dns/import` had nothing supplied and could discover nothing; if the domain already left its old registrar its records are unreadable and must be supplied explicitly
+- `TOO_MANY_RECORDS` — more than 500 records in one `/dns/import` call
 
 ## API specification
 
 - OpenAPI 3.0 spec: https://porkbun.com/api/json/v3/spec
 - Full Markdown reference (no JS): https://porkbun.com/llms-full.txt
 - Per-topic Markdown docs (index): https://porkbun.com/llms (e.g. /llms/dns, /llms/webhooks)
-- Guides (task-oriented how-tos): https://porkbun.com/llms/guides (getting-started, register-a-domain, dynamic-dns, verify-a-webhook)
+- Guides (task-oriented how-tos): https://porkbun.com/llms/guides (getting-started, register-a-domain, dynamic-dns, verify-a-webhook, godaddy-migration)
 - Documentation home (all formats): https://porkbun.com/api/json/v3/documentation
 - Interactive reference: https://porkbun.com/api/json/v3/documentation/interactive
 - Base URL: https://api.porkbun.com/api/json/v3

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Porkbun API Documentation — domains, DNS, SSL &amp; hosting for developers and AI agents</title>
-  <meta name="description" content="The Porkbun API (v3.19) is a developer- and agent-friendly REST API to register, renew, transfer and manage domains, DNS &amp; DNSSEC, SSL certificates, email forwarding, the marketplace, static and WordPress hosting, Cloudflare connect, and outbound webhooks — with machine-readable errors, idempotency keys, a full OpenAPI spec, an official MCP server, and an isolated sandbox.">
+  <meta name="description" content="The Porkbun API (v3.22) is a developer- and agent-friendly REST API to register, renew, transfer and manage domains, DNS &amp; DNSSEC, SSL certificates, email forwarding, the marketplace, static and WordPress hosting, Cloudflare connect, and outbound webhooks — with machine-readable errors, idempotency keys, a full OpenAPI spec, an official MCP server, and an isolated sandbox.">
   <link rel="canonical" href="https://porkbun.com/api/json/v3/documentation">
   <meta name="robots" content="index, follow">
   <!-- Open Graph / Twitter for shareable, SEO-friendly previews -->
@@ -27,7 +27,7 @@
     "name": "Porkbun API",
     "abstract": "REST API to register and manage domains, DNS, DNSSEC, SSL, email forwarding, marketplace, static hosting, and webhooks.",
     "url": "https://porkbun.com/api/json/v3/documentation",
-    "softwareVersion": "3.19",
+    "softwareVersion": "3.22",
     "provider": { "@type": "Organization", "name": "Porkbun, LLC", "url": "https://porkbun.com" },
     "programmingModel": "REST/JSON",
     "documentation": "https://porkbun.com/api/json/v3/spec"
@@ -104,7 +104,7 @@
   <header class="brand">
     <div class="wrap">
       <div class="logo"><img src="/images/porkbun.comphpPkl2eU.svg" alt="Porkbun">porkbun<span>API</span></div>
-      <div class="meta">v3.19<a href="/">porkbun.com</a></div>
+      <div class="meta">v3.22<a href="/">porkbun.com</a></div>
     </div>
   </header>
 
@@ -131,7 +131,7 @@
         <div class="card"><h3>Marketplace</h3><p>Browse the Porkbun aftermarket with server-side filters.</p></div>
         <div class="card"><h3>Secure Static Hosting</h3><p>Provision hosting and deploy a static site end-to-end — no dashboard.</p></div>
         <div class="card"><h3>WordPress hosting</h3><p>Provision a managed <strong>Cloud for WordPress</strong> site, then mint WordPress REST API credentials so an agent can publish and manage content on it.</p></div>
-        <div class="card"><h3>Official MCP server</h3><p><code>npx @porkbunllc/mcp-server</code> — 81 tools for Claude, Cursor and any MCP client. See <a href="/mcp">porkbun.com/mcp</a>.</p></div>
+        <div class="card"><h3>Official MCP server</h3><p><code>npx @porkbunllc/mcp-server</code> — 88 tools for Claude, Cursor and any MCP client. See <a href="/mcp">porkbun.com/mcp</a>.</p></div>
         <div class="card"><h3>Cloudflare connect</h3><p>Move domains into the customer's <strong>own Cloudflare account</strong> — create the zone, copy the DNS across, repoint nameservers — then manage those Cloudflare records, the orange cloud, and zone settings from the same API.</p></div>
         <div class="card"><h3>Outbound webhooks</h3><p>Get signed, real-time events (registrations, renewals, transfers, DNS changes) instead of polling.</p></div>
         <div class="card"><h3>Sandbox / test mode</h3><p>A <code>pk1_sb_</code> key runs the whole API in an isolated environment with fake credit — no real actions or charges, and signed webhooks are delivered too.</p></div>
@@ -150,7 +150,7 @@
         <div><strong>REST / JSON</strong><span>HTTPS only. Reads accept GET; writes are POST with a JSON body. Every response has a stable <code>status</code>.</span></div>
         <div><strong>Idempotency</strong><span>Send <code>Idempotency-Key</code> on any write; retries within 24h replay the original response — no double-charging.</span></div>
         <div><strong>Dry run</strong><span>Pass <code>dryRun: true</code> to rehearse a billable or destructive write (price, funds, eligibility) without performing it.</span></div>
-        <div><strong>Versioning</strong><span>Every response carries <code>X-API-Version</code> (currently 3.19). The path stays <code>/v3</code>; minor bumps are backward-compatible.</span></div>
+        <div><strong>Versioning</strong><span>Every response carries <code>X-API-Version</code> (currently 3.22). The path stays <code>/v3</code>; minor bumps are backward-compatible.</span></div>
         <div><strong>Request IDs</strong><span>An <code>X-Request-Id</code> header + <code>requestId</code> body field (UUIDv7) on every response for retries, logs, and support.</span></div>
       </div>
     </div>
@@ -189,7 +189,7 @@
         <li><a href="/llms/domain">Per-TLD registration requirements (JSON Schema)</a><span class="desc"><code>GET /domain/getRegistrationRequirements/{tld}</code> returns whether a TLD is API-registerable and the create payload as JSON Schema — including registry eligibility fields like <code>.us</code> nexus or <code>.ca</code> legal type. Validate a registration before sending it.</span></li>
         <li><a href="/llms-full.txt">Full reference (Markdown)</a><span class="desc">Every endpoint, parameter, and example in one flat, no-JavaScript file.</span></li>
         <li><a href="/llms">Per-topic docs (Markdown index)</a><span class="desc">One page per area — e.g. <a href="/llms/dns">/llms/dns</a>, <a href="/llms/webhooks">/llms/webhooks</a>, <a href="/llms/domain">/llms/domain</a>, <a href="/llms/sandbox">/llms/sandbox</a>.</span></li>
-        <li><a href="/llms/guides">Guides (how-tos)</a><span class="desc">Task walkthroughs: <a href="/llms/guides/getting-started">getting started</a>, <a href="/llms/guides/register-a-domain">register a domain</a>, <a href="/llms/guides/dynamic-dns">dynamic DNS</a>, <a href="/llms/guides/verify-a-webhook">verify a webhook</a>, <a href="/llms/guides/publish-to-wordpress">provision WordPress &amp; publish</a>, <a href="/llms/guides/move-domains-to-cloudflare">move domains to Cloudflare</a>.</span></li>
+        <li><a href="/llms/guides">Guides (how-tos)</a><span class="desc">Task walkthroughs: <a href="/llms/guides/getting-started">getting started</a>, <a href="/llms/guides/register-a-domain">register a domain</a>, <a href="/llms/guides/dynamic-dns">dynamic DNS</a>, <a href="/llms/guides/verify-a-webhook">verify a webhook</a>, <a href="/llms/guides/publish-to-wordpress">provision WordPress &amp; publish</a>, <a href="/llms/guides/move-domains-to-cloudflare">move domains to Cloudflare</a>, <a href="/llms/godaddy-migration">migrate from GoDaddy (beta)</a>.</span></li>
         <li><a href="/llms.txt">LLM overview (llms.txt)</a><span class="desc">Short orientation: what the API does, agent-safety features, quickstart, and key endpoints.</span></li>
         <li><a href="/llms/agent-setup">Agent setup prompt</a><span class="desc">Paste into your AI coding agent (Claude Code, Cursor, Cline, …) and it installs the MCP, obtains &amp; scopes credentials, and verifies — automatically.</span></li>
         <li><a href="/api/json/v3/documentation/interactive">Interactive reference</a><span class="desc">Browse and try endpoints in the browser (requires JavaScript).</span></li>
