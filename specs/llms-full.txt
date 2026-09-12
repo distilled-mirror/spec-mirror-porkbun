@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.22
+# Porkbun API v3 — v3.27
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -9,7 +9,7 @@ The Porkbun API enables programmatic domain registration, DNS management, SSL ce
 Build and test an integration end-to-end with **no real registry actions, no DNS changes, no certificates, and no charges** by using a **sandbox API key** — a public key prefixed `pk1_sb_` (secret `sk1_sb_`), created at https://porkbun.com/account/api. Same base URL; just swap the key. In sandbox:
 - Every response includes `"sandbox": true` and an `X-Porkbun-Sandbox: true` header.
 - Registrations, renewals, transfers, DNS, contacts, nameservers, glue, and DNSSEC are simulated against an isolated datastore; your account starts with fake credit (top up/reset via `/sandbox/topup` and `/sandbox/reset`). Availability and pricing reflect the real catalog so quotes match production.
-- Endpoints that can't be simulated — **hosting** and **email** — return `SANDBOX_UNSUPPORTED`.
+- Endpoints that can't be simulated — **hosting**, **email** and **closeouts** — return `SANDBOX_UNSUPPORTED`. Closeouts are excluded because the inventory and the purchase both live with a third party that has no test environment, so a simulated buy would claim a real domain.
 - **Webhooks are delivered in the sandbox.** Register an endpoint with `POST /webhook/create`, then either perform an operation (the matching signed event is delivered just like production) or fire any event on demand with `POST /sandbox/triggerWebhook` to test your handler and signature verification.
 
 ## Mock server (no credentials)
@@ -198,6 +198,18 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 
 Additional endpoint-specific codes may be returned; always check `message` for details.
 
+**Closeouts**
+
+| Code | Meaning |
+|------|---------|
+| `CLOSEOUT_NOT_FOUND` | That domain is not currently offered as a closeout. Inventory turns over constantly. HTTP 404. |
+| `CLOSEOUT_UNAVAILABLE` | Another buyer claimed it first. Closeouts are first-come at a fixed price, so retrying the same name is pointless. If it happened after the charge, the order was refunded and `refunded: true` is set. HTTP 409. |
+| `CLOSEOUT_NOT_ELIGIBLE` | The account is blocked from auctions and closeouts by support, over past-due invoices or an auction terms violation. Not retryable. HTTP 403. |
+| `CLOSEOUT_CLAIM_FAILED` | The provider rejected the claim after the charge; the order was refunded automatically. |
+| `CLOSEOUT_SOURCE_UNAVAILABLE` | The inventory provider could not be reached. Nothing was charged. HTTP 502. |
+| `PRICING_UNAVAILABLE` | The renewal price for the domain could not be looked up. Nothing was charged. HTTP 502. |
+| `ORDERS_BLOCKED` | This account cannot place new orders. HTTP 403. |
+
 **Webhooks**
 
 | Code | Meaning |
@@ -314,6 +326,29 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.27
+
+- **Closeout endpoints are now denied to sandbox keys** (`SANDBOX_UNSUPPORTED`), alongside hosting and email. The inventory and the claim both live with a third party that has no test environment, so a sandbox purchase would have deducted fake credit and then claimed a real domain. Use `dryRun` with a live key to rehearse.
+
+### v3.26
+
+- **Fixed `sortDirection` on `closeout/search?sortName=registrationDate`**, which was inverted: `asc` returned the newest registrations instead of the oldest. The provider orders that field by age rather than by date, so its codes run the opposite way round to every other sort it offers. `asc` now means earliest registration first, which is the whole point of sorting by it.
+- Ascending on `revenue`, `visitors` or `inboundLinks` returns the rows with no recorded figure first, because the provider stores "unknown" as a sentinel that sorts below every real value. The response now carries a `warnings` entry saying so rather than looking like a broken sort.
+
+### v3.25
+
+- **Closeout eligibility loosened to match domain registration**, plus verified email and phone. The account-age minimum and the prior-qualifying-order requirement are gone, on the web as well as the API: both were auction-grade rules that did not fit a fixed-price buy-it-now, where the listing is first-come and often gone within minutes. Accounts support has blocked from auctions and closeouts are still blocked, and auction *bidding* keeps the original rules.
+
+### v3.24
+
+- **Closeouts are now searchable and buyable over the API**: `GET /closeout/search`, `GET /closeout/get/{domain}` and `POST /closeout/buy/{domain}`. Closeouts are expired domains offered at a fixed, descending price with no bidding.
+- Search exposes every filter the inventory supports — keyword, TLD, exact name length, age range, price range — and sorts by domain, end time, price, revenue, visitors, inbound links or **registration date**. Age and registration date are returned on every row. The website paginates by price tier and does not show registration date, so finding aged names there means walking several tier pages and running a WHOIS per candidate; `sortName=registrationDate&sortDirection=asc` does it in one call.
+- Buying charges account credit and claims the name in one call, against an exact `cost` you took from `/closeout/get/{domain}`. Every post-charge failure refunds automatically and reports `refunded: true`, including losing the race to another buyer. The name is reserved rather than delivered — the provider releases it over the following days, so poll `/domain/listAll` or use the `domain.registered` webhook.
+
+### v3.23
+
+- **Newly registered domains are now transfer-locked at the registry, as they always should have been.** The registration path carried a lock step whose guard tested a variable nothing ever assigned, so it was dead code and the lock never ran: sampling found `.com` registrations still carrying no registry status ten days later. A domain registered through `/domain/create` now comes back with the registrar lock applied (`clientTransferProhibited` and friends), which is what inbound transfers have always done. Unlock it with the usual controls if you intend to transfer it away. TLDs that do not support registrar locks (.de, .eu, the .au family) are unaffected.
 
 ### v3.22
 
@@ -2006,6 +2041,101 @@ Response fields (BasicResponse):
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
+
+## GET /api/json/v3/closeout/search
+
+**Search expired-domain closeouts**
+
+Search the closeout inventory. Closeouts are expired domains that did not sell at auction and are now offered at a fixed, descending price — there is no bidding, the first buyer at the current price takes the name.
+
+Every filter is optional; with none you get the first page of the whole list plus `totalAvailable`. Page with `start`/`limit` until `start >= totalAvailable`.
+
+**`age` and `registrationDate` are on every row and both are sortable.** On the website the inventory is paginated by price tier and registration date is not shown, so finding aged names means walking several tier pages and then doing a WHOIS lookup per candidate. `sortName=registrationDate&sortDirection=asc` returns the oldest registrations first in one call.
+
+`price` is the closeout price alone. The binding total adds the renewal or transfer year you are also buying, and comes from `/closeout/get/{domain}` — it cannot be derived from search results, because a domain already at Porkbun is renewed while anything else is transferred in, and those are priced differently.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `query` | query | no | Keyword match on the domain name. |
+| `tld` | query | no | Single TLD, with or without the leading dot. Omit to search all. |
+| `nameLength` | query | no | Exact SLD character count. |
+| `ageMin` | query | no | Minimum domain age in years. Pair with sortName=registrationDate to find aged names. |
+| `ageMax` | query | no | Maximum domain age in years. |
+| `priceMin` | query | no | Minimum closeout price, integer US cents. Converted to whole dollars for the provider, rounding outward so the range never excludes an item inside it. |
+| `priceMax` | query | no | Maximum closeout price, integer US cents. |
+| `sortName` | query | no | One of: domain, endTime, price, revenue, visitors, inboundLinks, registrationDate. Ascending on registrationDate means oldest registration first, which is how you find aged names. Ascending on revenue, visitors or inboundLinks puts the domains with no recorded figure first (they return null) — use desc on those to see the highest values; the response carries a `warnings` entry reminding you. |
+| `sortDirection` | query | no | `asc` or `desc`. |
+| `start` | query | no | Offset for paging. Default 0. |
+| `limit` | query | no | Rows per page, 1-500. Default 100. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `count` | integer |  |
+| `totalAvailable` | integer | Size of the filtered set, for paging. |
+| `start` | integer |  |
+| `limit` | integer |  |
+| `closeouts` | object[] |  |
+
+## GET /api/json/v3/closeout/get/{domain}
+
+**One closeout, with the binding total**
+
+A single closeout plus `totalPrice` — the closeout price plus the registration year that comes with it. That total is what `/closeout/buy` will charge and what it expects back as `cost`.
+
+`localDomain` tells you which side of the pricing you are on: true means the name is already at Porkbun and is renewed, false means it is transferred in. `available` is false once somebody has claimed it.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `available` | boolean |  |
+| `closeout` | object |  |
+
+## POST /api/json/v3/closeout/buy/{domain}
+
+**Buy a closeout outright**
+
+**Spends account credit.** Buys a closeout at its current price and claims the name with the provider in one call. Send `cost` as the exact `totalPrice` from `/closeout/get/{domain}`; any other value is refused with `COST_MISMATCH` so a caller can never be charged a price it did not name. `dryRun: true` with `cost: 0` returns a quote and charges nothing. Honours `Idempotency-Key`.
+
+**The domain does not arrive immediately.** Claiming reserves it; the provider then has to release it, which usually takes a few days. Poll `/domain/listAll` or subscribe to the `domain.registered` webhook rather than expecting it in your account when this returns.
+
+Every post-charge failure refunds automatically and says so via `refunded: true` — including losing the race to another buyer (`CLOSEOUT_UNAVAILABLE`) and the price moving between quote and claim (`COST_MISMATCH`). Closeouts are first-come at a fixed price, so a lost race is not worth retrying on the same name.
+
+Not available with a sandbox key (`SANDBOX_UNSUPPORTED`): the inventory provider has no test environment, so a purchase cannot be rehearsed without claiming a real name. Use `dryRun` against a live key instead — it validates and prices without charging.
+
+Eligibility is the same as registering a domain, plus verified email and phone. There is no account-age or prior-order requirement — a first-time customer can buy a closeout, which matters because listings are first-come and often gone within minutes. An account that support has blocked from auctions and closeouts (past-due invoices, or an auction terms violation) returns `CLOSEOUT_NOT_ELIGIBLE`, which is not retryable.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `cost` | integer | yes | Exact totalPrice in integer US cents, from /closeout/get/{domain}. Use 0 only with dryRun to request a quote. |
+| `dryRun` | boolean | no | Validate and price without charging or claiming. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `orderId` | integer |  |
+| `closeoutId` | integer |  |
+| `closeoutPrice` | integer |  |
+| `renewalPrice` | integer |  |
+| `totalPrice` | integer |  |
+| `message` | string |  |
 
 ## GET /api/json/v3/dns/scan/{domain}
 

@@ -20,6 +20,7 @@ Note: unlike some registrars, Porkbun API keys work regardless of whether accoun
 - Learn any endpoint's response shape with **zero credentials** via the mock server at `/mock/<path>`
 - Read account credit balance and API spend-control settings
 - Browse the domain marketplace with server-side filters (query, TLD, SLD length, sort)
+- Search and **buy expired-domain closeouts** — fixed descending price, no bidding, first buyer takes it. Filter by keyword, TLD, name length, age range and price range, and sort by registration date to surface aged names
 - Set auto-renewal across a portfolio; detect caller IP for dynamic DNS
 - Subscribe to outbound webhooks for real-time, signed event notifications (registrations, renewals, transfers, upcoming expirations, DNS changes) instead of polling
 
@@ -55,7 +56,7 @@ Build and test an integration end-to-end with **no real registry actions, no DNS
 - Every response carries `"sandbox": true` and an `X-Porkbun-Sandbox: true` header, so an agent can assert it is not operating on production.
 - Domain registration, renewal, transfer, DNS, contacts, nameservers, glue, and DNSSEC are simulated against an isolated datastore; your sandbox account starts with fake credit. Top up or reset with `POST /sandbox/topup` and `POST /sandbox/reset`.
 - Availability and pricing reflect the real catalog, so quotes match production.
-- Endpoints that can't be simulated — hosting and email — return `SANDBOX_UNSUPPORTED`.
+- Endpoints that can't be simulated — hosting, email and closeouts — return `SANDBOX_UNSUPPORTED` (closeouts because the inventory provider has no test environment, so a simulated buy would claim a real name; use `dryRun` with a live key instead)
 - **Webhooks work in the sandbox.** Register an endpoint with `POST /webhook/create`, then either perform an operation (registration, renewal, transfer, DNS change → the matching event is signed and delivered exactly like production) or fire any event on demand with `POST /sandbox/triggerWebhook` `{"eventType": "domain.expiring", "domain": "example.com"}` to test your handler and signature verification without waiting for a real event.
 
 ## Mock server (no credentials)
@@ -136,6 +137,9 @@ Index: https://porkbun.com/llms/guides
 - `GET /account/balance` — account credit balance
 - `GET /account/apiSettings` — spend-control settings + current month spend
 - `POST /marketplace/getAll` — marketplace listings with filters
+- `GET /closeout/search` — search expired-domain closeouts. Filters: `query`, `tld`, `nameLength`, `ageMin`/`ageMax`, `priceMin`/`priceMax` (cents), `start`/`limit`; sort by `domain|endTime|price|revenue|visitors|inboundLinks|registrationDate` × `asc|desc` (`registrationDate` + `asc` = OLDEST first, which is how you find aged names; `asc` on revenue/visitors/inboundLinks lists no-data rows first, so use `desc` there). Returns `age` and `registrationDate` on every row, plus `totalAvailable` for paging. `price` is the closeout price ALONE
+- `GET /closeout/get/{domain}` — one closeout plus `totalPrice`, the binding amount (`price` + the renewal-or-transfer year). Cannot be derived from search: a name already at Porkbun is renewed, anything else is transferred in, and those price differently
+- `POST /closeout/buy/{domain}` — buy one. `cost` must equal `totalPrice` exactly (`COST_MISMATCH` otherwise); `dryRun` + `cost:0` quotes. Charges account credit and claims the name; the domain is **reserved, not delivered** — the provider releases it over the following days, so poll `/domain/listAll` or use the `domain.registered` webhook. Post-charge failures refund automatically with `refunded: true`, including losing the race (`CLOSEOUT_UNAVAILABLE`, not worth retrying on the same name)
 - `GET /webhook/eventTypes` — subscribable event-type catalog
 - `GET /webhook/list` , `GET /webhook/get/{id}` — list / fetch webhook endpoints
 - `POST /webhook/create` — register an HTTPS endpoint (returns the signing secret). The URL must be `https://` on port 443 with a hostname resolving to a **public** internet address, and must not embed credentials; private/loopback/link-local/CGNAT/reserved targets are refused with `INVALID_WEBHOOK_URL`. A not-yet-resolving hostname is accepted so you can register before deploying the receiver, but the rules are re-checked (and the connection pinned to the vetted address) immediately before every delivery
@@ -214,12 +218,14 @@ Pick the product with the `sku` you pass to `/hosting/create`: **Secure Static H
 - `MISSING_SECRETAPIKEY` — no secret supplied (common cause: the field was named `secretkey` instead of `secretapikey`)
 - `IP_NOT_ALLOWED` / `DOMAIN_NOT_ALLOWED` — request outside this key's allowlist
 - `IDEMPOTENCY_KEY_MISMATCH` / `IDEMPOTENCY_KEY_IN_USE` — idempotency conflicts
-- `SANDBOX_UNSUPPORTED` — this endpoint (e.g. hosting/email) isn't simulated in the sandbox; use a live key
+- `SANDBOX_UNSUPPORTED` — this endpoint (hosting, email, closeouts) isn't simulated in the sandbox; use a live key
 - `RATE_LIMIT_EXCEEDED` — HTTP 429; wait the seconds in the `Retry-After` header (also `ttlRemaining` / `X-RateLimit-Reset`)
 - `MONTHLY_SPEND_LIMIT_EXCEEDED` — would exceed the account's API spend cap
 - `INSUFFICIENT_FUNDS` — not enough account credit
 - `DOMAIN_NOT_FOUND` / `INVALID_DOMAIN` — domain not in your account / invalid
 - `INVALID_TYPE` — unsupported DNS record type
+- `CLOSEOUT_NOT_FOUND` / `CLOSEOUT_UNAVAILABLE` — not offered as a closeout / already claimed by another buyer
+- `CLOSEOUT_NOT_ELIGIBLE` — the account is blocked from auctions/closeouts by support (past-due invoices or an auction terms violation); not retryable. There is no account-age or prior-order requirement — closeout eligibility is the same as registration plus verified email and phone
 - `TRANSFER_INIT_FAILED` — the transfer could not be started and the order was refunded automatically; **not** a credentials or verification problem
 - `TRANSFER_HOLD_NOT_AVAILABLE` — `holdForDnsSetup` unsupported for this TLD; nothing charged, resend without it
 - `TRANSFER_ZONE_EMPTY` — releasing would move the domain to an empty zone; import records first or pass `force: true`

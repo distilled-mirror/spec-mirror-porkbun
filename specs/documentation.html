@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Porkbun API Documentation — domains, DNS, SSL &amp; hosting for developers and AI agents</title>
-  <meta name="description" content="The Porkbun API (v3.22) is a developer- and agent-friendly REST API to register, renew, transfer and manage domains, DNS &amp; DNSSEC, SSL certificates, email forwarding, the marketplace, static and WordPress hosting, Cloudflare connect, and outbound webhooks — with machine-readable errors, idempotency keys, a full OpenAPI spec, an official MCP server, and an isolated sandbox.">
+  <meta name="description" content="The Porkbun API (v3.27) is a developer- and agent-friendly REST API to register, renew, transfer and manage domains, DNS &amp; DNSSEC, SSL certificates, email forwarding, the marketplace, static and WordPress hosting, Cloudflare connect, and outbound webhooks — with machine-readable errors, idempotency keys, a full OpenAPI spec, an official MCP server, and an isolated sandbox.">
   <link rel="canonical" href="https://porkbun.com/api/json/v3/documentation">
   <meta name="robots" content="index, follow">
   <!-- Open Graph / Twitter for shareable, SEO-friendly previews -->
@@ -27,7 +27,7 @@
     "name": "Porkbun API",
     "abstract": "REST API to register and manage domains, DNS, DNSSEC, SSL, email forwarding, marketplace, static hosting, and webhooks.",
     "url": "https://porkbun.com/api/json/v3/documentation",
-    "softwareVersion": "3.22",
+    "softwareVersion": "3.27",
     "provider": { "@type": "Organization", "name": "Porkbun, LLC", "url": "https://porkbun.com" },
     "programmingModel": "REST/JSON",
     "documentation": "https://porkbun.com/api/json/v3/spec"
@@ -104,7 +104,7 @@
   <header class="brand">
     <div class="wrap">
       <div class="logo"><img src="/images/porkbun.comphpPkl2eU.svg" alt="Porkbun">porkbun<span>API</span></div>
-      <div class="meta">v3.22<a href="/">porkbun.com</a></div>
+      <div class="meta">v3.27<a href="/">porkbun.com</a></div>
     </div>
   </header>
 
@@ -129,9 +129,10 @@
         <div class="card"><h3>URL forwarding</h3><p>Create and manage 301/302/masked URL forwards for a domain.</p></div>
         <div class="card"><h3>Email forwarding</h3><p>Route mail on your domains to existing inboxes.</p></div>
         <div class="card"><h3>Marketplace</h3><p>Browse the Porkbun aftermarket with server-side filters.</p></div>
+        <div class="card"><h3>Expired closeouts</h3><p>Search expired-domain closeouts and buy one outright. Filter by age, price, TLD and name length, and sort by <strong>registration date</strong> to find aged names in a single call.</p></div>
         <div class="card"><h3>Secure Static Hosting</h3><p>Provision hosting and deploy a static site end-to-end — no dashboard.</p></div>
         <div class="card"><h3>WordPress hosting</h3><p>Provision a managed <strong>Cloud for WordPress</strong> site, then mint WordPress REST API credentials so an agent can publish and manage content on it.</p></div>
-        <div class="card"><h3>Official MCP server</h3><p><code>npx @porkbunllc/mcp-server</code> — 88 tools for Claude, Cursor and any MCP client. See <a href="/mcp">porkbun.com/mcp</a>.</p></div>
+        <div class="card"><h3>Official MCP server</h3><p><code>npx @porkbunllc/mcp-server</code> — 91 tools for Claude, Cursor and any MCP client. See <a href="/mcp">porkbun.com/mcp</a>.</p></div>
         <div class="card"><h3>Cloudflare connect</h3><p>Move domains into the customer's <strong>own Cloudflare account</strong> — create the zone, copy the DNS across, repoint nameservers — then manage those Cloudflare records, the orange cloud, and zone settings from the same API.</p></div>
         <div class="card"><h3>Outbound webhooks</h3><p>Get signed, real-time events (registrations, renewals, transfers, DNS changes) instead of polling.</p></div>
         <div class="card"><h3>Sandbox / test mode</h3><p>A <code>pk1_sb_</code> key runs the whole API in an isolated environment with fake credit — no real actions or charges, and signed webhooks are delivered too.</p></div>
@@ -150,7 +151,7 @@
         <div><strong>REST / JSON</strong><span>HTTPS only. Reads accept GET; writes are POST with a JSON body. Every response has a stable <code>status</code>.</span></div>
         <div><strong>Idempotency</strong><span>Send <code>Idempotency-Key</code> on any write; retries within 24h replay the original response — no double-charging.</span></div>
         <div><strong>Dry run</strong><span>Pass <code>dryRun: true</code> to rehearse a billable or destructive write (price, funds, eligibility) without performing it.</span></div>
-        <div><strong>Versioning</strong><span>Every response carries <code>X-API-Version</code> (currently 3.22). The path stays <code>/v3</code>; minor bumps are backward-compatible.</span></div>
+        <div><strong>Versioning</strong><span>Every response carries <code>X-API-Version</code> (currently 3.27). The path stays <code>/v3</code>; minor bumps are backward-compatible.</span></div>
         <div><strong>Request IDs</strong><span>An <code>X-Request-Id</code> header + <code>requestId</code> body field (UUIDv7) on every response for retries, logs, and support.</span></div>
       </div>
     </div>
