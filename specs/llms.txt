@@ -115,7 +115,8 @@ Index: https://porkbun.com/llms/guides
 - `GET/POST /ping` — verify credentials, get caller IP
 - `GET/POST /ip` — caller IP, no auth
 - `GET/POST /pricing/get` — pricing across all TLDs (no auth)
-- `POST /domain/checkDomain/{domain}` — availability + price (registration, renewal, transfer)
+- `POST /domain/checkDomain/{domain}` — availability + price (registration, renewal, transfer). Rate limited to 10 checks per 10 seconds per account by default (a 10-second window, so a batch of candidate names can go back-to-back); `limits` in the response reports what is left
+- `POST /domain/checkDomain` with `{"domains": [...]}` — **check up to 25 at once, and prefer this over looping the single form.** Separate budget of 200 domains per 60 seconds (counted per domain, not per call), because checks are chunked per registry and a batch costs us less than the same names one at a time. Returns `domains` keyed by name, plus `invalid` (not checkable — one typo does not fail the call) and `unresolved` (the registry did not answer; this is NOT "unavailable", retry them). Over 25 returns `BULK_CHECK_TOO_MANY` and checks nothing. Synchronous, no polling: ~3s for 25 mixed TLDs, but a batch heavy in low-cap TLDs (.de is one per command) is refused with `BULK_CHECK_TOO_SLOW` rather than risking a truncated response.
 - `GET /domain/getRegistrationRequirements/{tld}` — is the TLD API-registerable + the create-request body as JSON Schema + any registry eligibility fields (e.g. .us nexus, .ca legal type). Call before create to validate eligibility/payload
 - `POST /domain/create/{domain}` — register
 - `POST /domain/renew/{domain}` — renew
@@ -132,7 +133,11 @@ Index: https://porkbun.com/llms/guides
 - `GET/POST /dns/retrieve/{domain}` — get DNS records
 - `GET /dns/scan/{domain}` — discover what the domain currently publishes by querying its **live** nameservers; writes nothing. Run this BEFORE a transfer moves the nameservers, because a transfer carries no zone data and the old registrar's records become unreadable the moment it stops answering. Thorough but not exhaustive (DNS cannot list a zone; AXFR is refused). 20 calls/hour
 - `POST /dns/import/{domain}` — bulk-create records, either an exact `records` list you supply or whatever a scan finds. Idempotent: already-present records come back as `skipped`, not failures. Max 500/call. Records do nothing until the domain points at Porkbun's nameservers
-- `POST /dns/create/{domain}` , `POST /dns/edit/{domain}/{id}` , `POST /dns/delete/{domain}/{id}` — manage DNS. Creating a record that already exists with the same name/type/content returns HTTP 400 `DUPLICATE_RECORD` with the existing record's id in `existingId` (adopt it, don't retry); a write blocked by CNAME exclusivity returns `RECORD_CONFLICT` with the blocking rows in `conflictingRecords`. Editing a record to the values it already holds succeeds as a no-op, so you can write desired state unconditionally
+- `POST /dns/create/{domain}` , `POST /dns/edit/{domain}/{id}` , `POST /dns/delete/{domain}/{id}` — manage DNS. Creating a record that already exists with the same name/type/content returns HTTP 400 `DUPLICATE_RECORD` with the existing record's id in `existingId` (adopt it, don't retry); a write blocked by CNAME exclusivity returns `RECORD_CONFLICT` with the blocking rows in `conflictingRecords`. A zone is capped at 2,500 records; past that, creates return `ZONE_RECORD_LIMIT`. Editing a record to the values it already holds succeeds as a no-op, so you can write desired state unconditionally
+- `GET /dns/getDnssecRecords/{domain}` , `POST /dns/createDnssecRecord/{domain}` , `POST /dns/deleteDnssecRecord/{domain}/{keytag}` — manage DNSSEC at the registry
+
+*Semantics that trip agents up:* DNSSEC algorithms and digest types are validated **per registry**, not globally. Registries are retiring the values deprecated by RFC 9904/9905/9906 on their own schedules, so a value one registry has already dropped may still be accepted by another. A refused value returns `DNSSEC_ALGORITHM_DEPRECATED` before anything is sent to the registry; a value that still works but is being retired returns `SUCCESS` with a `warnings` array, which is advisory: the record WAS created. Algorithm 8 (RSA/SHA-256) or 13 (ECDSA/SHA-256) with digest type 2 (SHA-256) is accepted everywhere. Deprecation never affects reads or deletes: an existing record keeps resolving and can always be removed, whatever it is signed with.
+
 - `GET/POST /ssl/retrieve/{domain}` — SSL bundle
 - `GET /account/balance` — account credit balance
 - `GET /account/apiSettings` — spend-control settings + current month spend
@@ -220,6 +225,7 @@ Pick the product with the `sku` you pass to `/hosting/create`: **Secure Static H
 - `IDEMPOTENCY_KEY_MISMATCH` / `IDEMPOTENCY_KEY_IN_USE` — idempotency conflicts
 - `SANDBOX_UNSUPPORTED` — this endpoint (hosting, email, closeouts) isn't simulated in the sandbox; use a live key
 - `RATE_LIMIT_EXCEEDED` — HTTP 429; wait the seconds in the `Retry-After` header (also `ttlRemaining` / `X-RateLimit-Reset`)
+  Every authenticated response carries `X-RateLimit-Limit` / `-Remaining` / `-Reset` / `-Window` for a general per-key request budget (20 per 2 seconds). While `X-RateLimit-Mode: observe` is present that budget is measured but **not** enforced, so exhausting it does not fail a request; per-operation limits still do.
 - `MONTHLY_SPEND_LIMIT_EXCEEDED` — would exceed the account's API spend cap
 - `INSUFFICIENT_FUNDS` — not enough account credit
 - `DOMAIN_NOT_FOUND` / `INVALID_DOMAIN` — domain not in your account / invalid
@@ -234,6 +240,10 @@ Pick the product with the `sku` you pass to `/hosting/create`: **Secure Static H
 - `RECORD_CONFLICT` — a CNAME cannot share a name with any other record type (RFC 1034); `conflictingRecords` lists what blocks it
 - `NOTHING_TO_IMPORT` — `/dns/import` had nothing supplied and could discover nothing; if the domain already left its old registrar its records are unreadable and must be supplied explicitly
 - `TOO_MANY_RECORDS` — more than 500 records in one `/dns/import` call
+- `ZONE_RECORD_LIMIT` — the zone holds the maximum of 2,500 DNS records; nothing was created, `count` and `limit` give the current size and the ceiling, delete something first
+- `BULK_CHECK_TOO_MANY` — more than 25 domains in one bulk check; nothing was checked, split the list
+- `BULK_CHECK_TOO_SLOW` — the bulk batch's TLD mix needs too many sequential registry commands (.de is one domain per command); nothing was checked, split the slow TLDs out
+- `DNSSEC_ALGORITHM_DEPRECATED` — this registry no longer accepts that DNSSEC algorithm or digest type (RFC 9904/9905/9906); the message names the value and a replacement. Affects create only, never read or delete
 
 ## API specification
 

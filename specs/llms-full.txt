@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.27
+# Porkbun API v3 — v3.30
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -151,6 +151,9 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 | `DUPLICATE_RECORD` | A record with this exact name, type and content already exists, so nothing was created. The existing record's id is returned in `existingId` — adopt it rather than creating another. HTTP 400. |
 | `NOTHING_TO_IMPORT` | `/dns/import` had no records supplied and could discover none. Once a domain has left its old registrar its published records can no longer be read, so they must be supplied explicitly. HTTP 400. |
 | `TOO_MANY_RECORDS` | More than 500 records in one `/dns/import` call. HTTP 400. |
+| `ZONE_RECORD_LIMIT` | The zone is at the maximum number of DNS records (2,500). Nothing was created. `count` gives the current size and `limit` the ceiling; delete records you no longer need first. HTTP 400. |
+| `BULK_CHECK_TOO_MANY` | More than 25 domains in one `POST /domain/checkDomain` call. Nothing was checked; split the list. HTTP 400. |
+| `BULK_CHECK_TOO_SLOW` | The bulk check's mix of TLDs would need more sequential registry commands than one request can safely wait on (some registries accept only a few domains per command; .de accepts one). Nothing was checked. `registryCommandsNeeded` and `maxRegistryCommands` are in the response. HTTP 400. |
 | `TRANSFER_INIT_FAILED` | The transfer could not be started; the order is refunded automatically. Not a credentials or verification problem. HTTP 400. |
 | `TRANSFER_HOLD_NOT_AVAILABLE` | `holdForDnsSetup` is not supported for this TLD (.uk, Handshake). Nothing was charged; resend without the flag. |
 | `TRANSFER_NOT_FOUND` | No pending inbound transfer for that domain on this account. |
@@ -326,6 +329,24 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.30
+
+- Bulk checks are refused up front with `BULK_CHECK_TOO_SLOW` when a batch's TLD mix would need more sequential registry commands than one request can wait on, instead of blocking until the request is killed and the body truncated.
+- **Bulk availability checks**: `POST /domain/checkDomain` now takes a `domains` array (up to 25) and answers them in one call, keyed by domain. It has its own budget of **200 domains per 60 seconds**, counted per domain rather than per request, which is deliberately more generous per name than the single check because checks are chunked per registry and a batch really is less work than the same names one at a time. Read the three result lists: `domains` (answered), `invalid` (not checkable, one typo does not fail the call) and `unresolved` (the registry did not answer, which is **not** the same as unavailable). New `BULK_CHECK_TOO_MANY`.
+- **Availability checks raised from 1 per 10 seconds to 10 per 10 seconds** per account. Of the 15 API keys that had ever been given a per-key check override, every one raised the rate (to between 1/s and 10/s) and none lowered it, so the old default was a number that failed for anyone who noticed it. The window stays 10 seconds rather than becoming 1 per second at the same average, because an agent checking a list of candidate names sends a burst and then goes quiet.
+- **`/domain/checkSingleDomain` now honours the per-key check overrides.** It always shared one rate-limit bucket with `/domain/checkDomain`, but hardcoded 1-per-10s, so a key explicitly granted a higher rate still got the old limit through this endpoint, and the refusal came back as a 400 with no error code instead of a 429 with `Retry-After`. Both endpoints now run the same check.
+- **Corrected the documented attempt limit on `/domain/create` and `/domain/renew`**: it is 1 per second, not 1 per 10 seconds. The code has always been 1 per second; the spec was wrong.
+
+### v3.29
+
+- **DNSSEC values are checked against the registry's policy before the request is sent.** Registries are retiring the algorithms and digest types deprecated by RFC 9904/9905/9906 on their own schedules, so `/dns/createDnssecRecord` now validates per registry rather than globally. A value the registry has already stopped accepting is refused up front with `DNSSEC_ALGORITHM_DEPRECATED`, naming the field and a replacement, instead of being relayed as an opaque registry `2306`. A value that still works but is on its way out comes back in `warnings` on an otherwise successful create. Nothing changes for `/dns/getDnssecRecords` or `/dns/deleteDnssecRecord`: existing records keep resolving and can always be deleted, whatever they are signed with.
+
+### v3.28
+
+- **Registration, renewal and transfer success limits raised from 50 to 1000 per 24 hours** per account. The attempt limit (1 per second) is unchanged, and both remain configurable per API key with current values returned in the `limits` field. The old ceiling predated bulk agent use and was being hit by legitimate portfolio work.
+- **`X-RateLimit-Limit`, `-Remaining`, `-Reset` and `-Window` headers are now returned on every authenticated response**, reflecting a general per-API-key request budget (currently 20 requests per 2 seconds, i.e. 10/second sustained with room for a burst). A second, per-account budget applies across all of an account's keys. These are **not being enforced yet**: the counters run and the headers are accurate, but no request is rejected, and responses carry `X-RateLimit-Mode: observe` while that is true. Build against the headers now; enforcement will be announced before it is switched on. The existing per-operation limits are unaffected and remain stricter where they apply.
+- **New `ZONE_RECORD_LIMIT` error on DNS creates.** A zone is now capped at 2,500 records. The limit is enforced in the shared DNS write path, so it applies identically to the API, the website and internal jobs, and it is checked after the duplicate test: re-creating a record that already exists adds nothing to the zone and is still answered by `DUPLICATE_RECORD`. The response carries `count` and `limit`. Measured against live data, 14 zones hold more than 500 records and only 2 hold more than 2,500, so no ordinary zone is affected.
 
 ### v3.27
 
@@ -683,13 +704,53 @@ Response fields:
 | `message` | string |  |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
 
+## POST /api/json/v3/domain/checkDomain
+
+**Check several domains at once**
+
+Check availability and pricing for up to 25 domains in one call. Same endpoint as the single check, with a `domains` array in the body and no domain in the path.
+
+**Prefer this over looping the single check.** Checks are chunked per registry, so a batch is materially less work for us than the same names one at a time, and the budget reflects that: this draws on a separate allowance of **200 domains per 60 seconds** per account, against 10 checks per 10 seconds for the single form. Counting is per DOMAIN, not per request, so 25 domains spends 25 of the 200.
+
+**Partial results are normal and must be read.** Three lists come back and they mean different things:
+- `domains` - answered, keyed by domain name, each value identical in shape to the single-check `response`.
+- `invalid` - entries that are not checkable at all (not a domain, unsupported TLD). One typo does not fail the call; the other names are still answered.
+- `unresolved` - the registry did not answer in time. These are **neither available nor taken**; treating them as unavailable is wrong. Retry them.
+
+Duplicates are removed before the budget is charged. If more than 25 remain, nothing is checked and `BULK_CHECK_TOO_MANY` is returned rather than a truncated answer.
+
+**Latency.** This is synchronous: one request, one complete answer, no polling. 25 domains across 25 different TLDs measures around 3 seconds, because the connection manager fans a batch that fits under every registry's cap out as a single command. A few registries cap low and **.de accepts one domain per command**, so a batch heavy in those becomes several sequential commands; if that would need more than 4, the call is refused with `BULK_CHECK_TOO_SLOW` rather than left to time out mid-response.
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `domains` | string[] | yes | Domains to check, e.g. ["example.com", "example.net"]. Duplicates are removed. |
+
+```bash
+curl -X POST https://api.porkbun.com/api/json/v3/domain/checkDomain \
+  -H 'Content-Type: application/json' \
+  -d '{"apikey":"pk1_...","secretapikey":"sk1_...","domains":["example.com","example.net"]}'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `checked` | integer | How many domains were answered |
+| `domains` | object | Keyed by domain name; each value has the same shape as the single-check `response` object |
+| `unresolved` | string[] | The registry did not answer for these. NOT a statement of availability - retry them. |
+| `invalid` | object[] | Entries that could not be checked, each with a reason |
+| `limits` | object | Bulk budget usage; `countedIn` is "domains" |
+
 ## POST /api/json/v3/domain/checkDomain/{domain}
 
 **Check domain availability**
 
 Check if a domain is available for registration and retrieve current pricing. Includes registration, renewal, and transfer prices.
 
-**Rate limit:** Configurable per API key. Default is 1 check per 10 seconds per account. Rate limit usage is returned in the `limits` field of the response.
+**Rate limit:** Configurable per API key. Default is 10 checks per 10 seconds per account (raised from 1 per 10 seconds in 3.29). The window is intentionally 10 seconds rather than 1, so a batch of candidate names can be checked back-to-back. `/domain/checkSingleDomain` draws on the same budget. Rate limit usage is returned in the `limits` field of the response.
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -727,8 +788,8 @@ Registrations are always for the registry-minimum duration (usually 1 year).
 **WHOIS privacy.** WHOIS privacy is automatically enabled on new registrations (when the TLD supports it). Pass the optional `whoisPrivacy` field to override this on a per-registration basis, or change the account-level default under Account Security Settings on porkbun.com/account.
 
 **Rate limits (both apply):**
-- Attempt limit (default: 1 attempt per 10 seconds per account)
-- Success limit (default: 50 successful registrations per 86400 seconds per account)
+- Attempt limit (default: 1 attempt per second per account)
+- Success limit (default: 1000 successful registrations per 86400 seconds per account)
 
 Both limits are configurable per API key and their current values are returned in the `limits` field of the response.
 
@@ -828,8 +889,8 @@ Renew a domain using account credit. Requirements:
 Renewals are always for the registry-minimum duration (usually 1 year). Use `/domain/checkDomain/{domain}` with `priceType=renewal` to get the current price before renewing.
 
 **Rate limits (both apply):**
-- Attempt limit (default: 1 attempt per 10 seconds per account)
-- Success limit (default: 50 successful renewals per 86400 seconds per account)
+- Attempt limit (default: 1 attempt per second per account)
+- Success limit (default: 1000 successful renewals per 86400 seconds per account)
 
 Both limits are configurable per API key and their current values are returned in the `limits` field of the response.
 
@@ -2248,6 +2309,8 @@ Response fields:
 
 Create a DNSSEC DS or key record at the registry. DNSSEC requirements vary by registry — `keyTag`, `alg`, `digestType`, and `digest` are the minimum required fields. Key data fields are optional and will be omitted if not accepted by the registry.
 
+Algorithm and digest type are validated against the registry's own policy before the request is sent. Registries are retiring the values deprecated by RFC 9904/9905/9906 on different schedules, so what is accepted depends on the TLD: a value one registry has already dropped may still be accepted by another. A value the registry no longer accepts returns `DNSSEC_ALGORITHM_DEPRECATED`; one that still works but is being retired returns `status: SUCCESS` with a `warnings` array. Use algorithm 8 (RSA/SHA-256) or 13 (ECDSA/SHA-256) with digest type 2 (SHA-256) to be accepted everywhere. Existing DNSSEC records keep resolving regardless, and can always be deleted.
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
@@ -2272,13 +2335,14 @@ curl -X POST https://api.porkbun.com/api/json/v3/dns/createDnssecRecord/{domain}
   -d '{"apikey":"pk1_...","secretapikey":"sk1_...","keyTag":"12345","alg":"13","digestType":"2","digest":"ABCD1234..."}'
 ```
 
-Response fields (BasicResponse):
+Response fields:
 
 | Field | Type | Description |
 |---|---|---|
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
+| `warnings` | string[] | Present only when a value was accepted but is being retired, e.g. a digest type the registry has announced it will stop accepting. Advisory: the record was created. |
 
 ## POST /api/json/v3/dns/deleteDnssecRecord/{domain}/{keytag}
 
