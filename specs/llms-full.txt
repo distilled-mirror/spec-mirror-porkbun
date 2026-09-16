@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.30
+# Porkbun API v3 — v3.31
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -329,6 +329,10 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.31
+
+- **`securityLock`, `whoisPrivacy`, `autoRenew`, `apiAccess` and `notLocal` are now always integers** in `/domain/listAll` and `/domain/get/{domain}`. They previously came back as the string `"1"` when the flag was on and the number `0` when it was off, so a single response mixed types for the same field. The spec has always documented all five as integers; this makes the response match. Reported by a customer. If you were comparing against `"1"` as a string, compare against `1`.
 
 ### v3.30
 
