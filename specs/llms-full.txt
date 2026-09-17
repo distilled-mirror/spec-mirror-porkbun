@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.31
+# Porkbun API v3 — v3.32
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -152,6 +152,9 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 | `NOTHING_TO_IMPORT` | `/dns/import` had no records supplied and could discover none. Once a domain has left its old registrar its published records can no longer be read, so they must be supplied explicitly. HTTP 400. |
 | `TOO_MANY_RECORDS` | More than 500 records in one `/dns/import` call. HTTP 400. |
 | `ZONE_RECORD_LIMIT` | The zone is at the maximum number of DNS records (2,500). Nothing was created. `count` gives the current size and `limit` the ceiling; delete records you no longer need first. HTTP 400. |
+| `RESTORE_POINT_NOT_FOUND` | That restore point does not exist for this domain. List them with `GET /dns/history/{domain}`. A point belonging to another account reads the same way rather than confirming it exists. HTTP 404. |
+| `RESTORE_POINT_EMPTY` | The restore point holds no records, so there is nothing to restore from it. HTTP 400. |
+| `DNS_READ_FAILED` | The current zone could not be read, so nothing was changed. Retryable. HTTP 500. |
 | `BULK_CHECK_TOO_MANY` | More than 25 domains in one `POST /domain/checkDomain` call. Nothing was checked; split the list. HTTP 400. |
 | `BULK_CHECK_TOO_SLOW` | The bulk check's mix of TLDs would need more sequential registry commands than one request can safely wait on (some registries accept only a few domains per command; .de accepts one). Nothing was checked. `registryCommandsNeeded` and `maxRegistryCommands` are in the response. HTTP 400. |
 | `TRANSFER_INIT_FAILED` | The transfer could not be started; the order is refunded automatically. Not a credentials or verification problem. HTTP 400. |
@@ -329,6 +332,12 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.32
+
+- **Zone history: DNS finally has an undo.** `GET /dns/history/{domain}` lists the versions of a zone we hold, `GET /dns/diff/{domain}/{id}` shows what changed against the live zone, and `POST /dns/restore/{domain}` puts it back. Restore points are taken automatically before the first write to a zone in each hour, before any bulk import or wipe, and before any restore -- so recovering a mistaken DNS edit no longer depends on the customer remembering what the record said.
+- A restore adds back what is missing and leaves records you have added since alone; `prune: true` opts into removing them. The state before the restore is itself saved and returned as `previousStateSavedAs`, so a restore can be undone. `dryRun` is supported. Parking and other masked records cannot be recreated this way and come back in `failed` rather than being counted as restored.
+- New errors `RESTORE_POINT_NOT_FOUND`, `RESTORE_POINT_EMPTY`, `DNS_READ_FAILED`.
 
 ### v3.31
 
@@ -2201,6 +2210,116 @@ Response fields:
 | `renewalPrice` | integer |  |
 | `totalPrice` | integer |  |
 | `message` | string |  |
+
+## GET /api/json/v3/dns/history/{domain}
+
+**List restore points for a zone**
+
+Every version of a zone we still hold, newest first.
+
+**DNS is the only part of a stack with no undo, and this is it.** If a record was deleted or edited by mistake, you do not have to know what it used to say -- ask for the restore points, diff one against the live zone, and put it back.
+
+Restore points are taken automatically: before the **first** write to a zone in each hour (so a session of edits costs one point, not one per record), before any bulk import or zone wipe, and before any restore. `recordCount` is the size of the zone **as it was at that moment**, not now.
+
+`matchesLive` tells you which point the zone currently sits on without diffing each one. Up to 50 are returned.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+
+```bash
+curl -X GET https://api.porkbun.com/api/json/v3/dns/history/example.com \
+  -H 'Content-Type: application/json' \
+  -d '{"apikey":"pk1_...","secretapikey":"sk1_..."}'
+```
+
+Response fields (DnsHistoryResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `restorePoints` | object[] | Newest first, up to 50. |
+
+## GET /api/json/v3/dns/diff/{domain}/{snapshotId}
+
+**Compare a restore point with the live zone**
+
+What changed between a restore point and the zone as it stands now.
+
+- `missing` -- in the restore point, not live. These are the records a restore would add back.
+- `extra` -- live, not in the restore point. A restore leaves these alone unless you pass `prune`.
+- `inSync` -- true when neither list has anything in it.
+
+Records are compared on **name, type, content and priority**, not on id: an id means nothing across a delete and re-create, and what anyone means by "the same record" is the data. SOA and NS are excluded from both lists because they are the zone's own scaffolding.
+
+For masked records (parking, `ALIAS`, `HTTPS`) the value shown is the one you configured, not the internal host it resolves to.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `snapshotId` | path | yes | A restore point id from GET /dns/history/{domain}. |
+
+```bash
+curl -X GET https://api.porkbun.com/api/json/v3/dns/diff/example.com/1234 \
+  -H 'Content-Type: application/json' \
+  -d '{"apikey":"pk1_...","secretapikey":"sk1_..."}'
+```
+
+Response fields (DnsDiffResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `snapshot` | object |  |
+| `missing` | object[] | In the restore point, not live. A restore adds these back. |
+| `extra` | object[] | Live, not in the restore point. A restore leaves these alone unless prune is true. |
+| `inSync` | boolean |  |
+
+## POST /api/json/v3/dns/restore/{domain}
+
+**Restore a zone to a previous state**
+
+Put a zone back to a restore point.
+
+**What it does by default:** adds back every record in the restore point that is not live now. It does **not** remove records you have added since -- pass `prune: true` for that. "Restore my records" usually means "put back what I lost", not "delete everything I have done since", so the destructive half is opt-in.
+
+**This is itself reversible.** The zone's current state is snapshotted before anything changes and the new point's id comes back as `previousStateSavedAs`, so an unwanted restore is undone by restoring that.
+
+**Read `failed`.** Parking records and other masked types (`ALIAS`, `HTTPS`) are managed by another part of the platform and cannot be recreated this way. They come back named in `failed` rather than being counted as restored, so `restored` is a true count. SOA and NS are never touched.
+
+Supports `dryRun: true`, which reports exactly what would be added and removed and changes nothing.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `snapshotId` | integer | yes | The restore point to go back to, from GET /dns/history/{domain}. |
+| `prune` | boolean | no | Also delete live records that are not in the restore point. Default false, which only adds back what is missing. |
+| `dryRun` | boolean | no | Report what would change without changing anything. |
+
+```bash
+curl -X POST https://api.porkbun.com/api/json/v3/dns/restore/example.com \
+  -H 'Content-Type: application/json' \
+  -d '{"apikey":"pk1_...","secretapikey":"sk1_...","snapshotId":1234,"dryRun":true}'
+```
+
+Response fields (DnsRestoreResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `restoredFrom` | integer | The restore point used. |
+| `previousStateSavedAs` | integer | A new restore point holding the state from immediately BEFORE this restore. Restore that to undo this. |
+| `restored` | integer | Records added back. A true count -- anything that could not be recreated is in `failed` instead. |
+| `removed` | integer | Records deleted, which is always 0 unless prune was true. |
+| `failed` | object[] | Records that could not be recreated, with the reason. Parking and other masked types are managed elsewhere and cannot be restored this way. |
 
 ## GET /api/json/v3/dns/scan/{domain}
 
