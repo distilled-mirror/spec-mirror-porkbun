@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.32
+# Porkbun API v3 — v3.33
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -332,6 +332,11 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.33
+
+- **`GET /dns/preflight/{domain}`** reports whether a change is about to break a domain, before you change delegation, transfer it out or enable DNSSEC. Read-only. Every check in it comes from an incident: DNSSEC active during a nameserver change (which takes a domain dark rather than degrading it), CNAME exclusivity, more than one apex SPF record, an SPF chain over the ten-lookup limit, an apex MX pointing at localhost, and names that have stopped inheriting a wildcard because an MX or TXT record made them exist (RFC 4592). Findings split into `blockers` and `warnings`, each naming its rule and carrying a `next_action`.
+- **A second apex SPF record is now refused**, on create and on edit, with `SPF_CONFLICT`. Two SPF records at one name is a permerror under RFC 7208 4.5 and around 16,000 zones had drifted into it. The refusal carries the existing record id, its current content, and where the two can be safely combined the single merged record to write instead, so a caller fixes it in one step rather than hitting a wall.
 
 ### v3.32
 
@@ -2210,6 +2215,48 @@ Response fields:
 | `renewalPrice` | integer |  |
 | `totalPrice` | integer |  |
 | `message` | string |  |
+
+## GET /api/json/v3/dns/preflight/{domain}
+
+**Check whether a change will break the domain**
+
+Read-only. Answers the question of whether a change is about to break the domain, before you change delegation, transfer it out, or turn DNSSEC on. It changes nothing and spends nothing.
+
+**Every check here comes from an incident we actually had**, which is the point: these are the failures where a zone looks fine and stops working anyway, and nobody can say why afterwards. Each finding names the rule it comes from and carries a `next_action`, so it argues its case rather than asserting a verdict.
+
+Pass `intent` to scope it: `general` (default) runs everything applicable, `move-nameservers` adds the delegation checks, `transfer-out` adds the checks that matter when leaving, `enable-dnssec` the DNSSEC ones.
+
+Read `blockers` first -- those will break something. `warnings` will not break outright but are usually what the customer asks about next. `safe` is true only when both lists are empty.
+
+| id | severity | what it catches |
+|----|----------|-----------------|
+| `dnssec-active` | blocker | DS records are published, so new nameservers serve answers that do not match them and validating resolvers refuse the whole zone. The domain goes dark rather than degrading. Remove DNSSEC, wait for the DS TTL, then move. |
+| `dnssec-unknown` | warning | the registry did not answer conclusively. Do not read that as an absence of DNSSEC. |
+| `cname-exclusivity` | blocker | a CNAME sharing a name with another record type, which RFC 1034 forbids and resolvers handle inconsistently. |
+| `spf-duplicate` | blocker | more than one apex SPF record: a permerror under RFC 7208 4.5 that makes receivers fail the check for every sender. |
+| `spf-lookups` | blocker | an SPF chain over the ten DNS lookups RFC 7208 4.6.4 allows, which is also a permerror. |
+| `mx-undeliverable` | blocker | an apex MX pointing somewhere unreachable such as localhost, so mail bounces or vanishes. |
+| `wildcard-shadowed` | warning | names that exist only because of an MX or TXT record. Under RFC 4592 a wildcard answers only names that do NOT exist, so those names stop inheriting the wildcard address and go dark with nothing in the zone looking wrong. |
+| `apex-resolves` | warning | nothing answers at the bare domain. |
+| `zone-size` | warning | within 10 percent of the 2,500-record limit. |
+| `cloudflare-zone` | info | the zone is served through Cloudflare, which can lag briefly after a delegation change. |
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `intent` | query | no | What you are about to do. One of general, move-nameservers, transfer-out, enable-dnssec. May also be sent in the request body. |
+
+Response fields (DnsPreflightResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `intent` | string |  |
+| `safe` | boolean | True only when there are no blockers AND no warnings. |
+| `blockers` | string[] | Check ids that will break something. Read these first. |
+| `warnings` | string[] | Will not break outright, but usually what the customer asks about next. |
+| `checks` | object[] | Every check that ran, passing ones included, so a caller can show what was verified rather than only what failed. |
 
 ## GET /api/json/v3/dns/history/{domain}
 
