@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.33
+# Porkbun API v3 — v3.34
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -332,6 +332,11 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.34
+
+- **A DNS write to a domain that is not delegated to us now says so.** We keep a zone for every domain in your account whether or not the domain points at our nameservers, and a write to a zone nobody is querying used to return a bare `SUCCESS` -- stored by us, invisible to the world. Those responses now carry a `warnings` array naming the nameservers that actually answer for the domain and what to do about it. The write is still performed (the zone stays ready if the delegation comes back), and `status` is still `SUCCESS`, so this is additive: `warnings` is absent when there is nothing to say. Covers `/dns/create`, `/dns/edit`, `/dns/editByNameType`, `/dns/delete`, `/dns/deleteByNameType`, `/dns/import` and `/dns/restore`.
+- **`GET /dns/preflight/{domain}` gained a `nameservers-ours` check**, reporting the same fact ahead of time, including the mixed case where only some of the delegated nameservers are ours and resolvers disagree.
 
 ### v3.33
 
@@ -1499,6 +1504,7 @@ Response fields (BasicResponse):
 
 | Field | Type | Description |
 |---|---|---|
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
@@ -1579,6 +1585,7 @@ Response fields (BasicResponse):
 
 | Field | Type | Description |
 |---|---|---|
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
@@ -1610,6 +1617,7 @@ Response fields (BasicResponse):
 
 | Field | Type | Description |
 |---|---|---|
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
@@ -1635,6 +1643,7 @@ Response fields (BasicResponse):
 
 | Field | Type | Description |
 |---|---|---|
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
@@ -1719,6 +1728,7 @@ Response fields (BasicResponse):
 
 | Field | Type | Description |
 |---|---|---|
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
@@ -1744,6 +1754,7 @@ Response fields (BasicResponse):
 
 | Field | Type | Description |
 |---|---|---|
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
@@ -1998,6 +2009,7 @@ Response fields:
 |---|---|---|
 | `status` | string |  |
 | `id` | string | The numeric ID of the newly created record |
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 
 ## POST /api/json/v3/dns/edit/{domain}/{id}
 
@@ -2031,6 +2043,7 @@ Response fields (BasicResponse):
 
 | Field | Type | Description |
 |---|---|---|
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
@@ -2066,6 +2079,7 @@ Response fields (BasicResponse):
 
 | Field | Type | Description |
 |---|---|---|
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
@@ -2091,6 +2105,7 @@ Response fields (BasicResponse):
 
 | Field | Type | Description |
 |---|---|---|
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
@@ -2117,6 +2132,7 @@ Response fields (BasicResponse):
 
 | Field | Type | Description |
 |---|---|---|
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
@@ -2239,6 +2255,7 @@ Read `blockers` first -- those will break something. `warnings` will not break o
 | `wildcard-shadowed` | warning | names that exist only because of an MX or TXT record. Under RFC 4592 a wildcard answers only names that do NOT exist, so those names stop inheriting the wildcard address and go dark with nothing in the zone looking wrong. |
 | `apex-resolves` | warning | nothing answers at the bare domain. |
 | `zone-size` | warning | within 10 percent of the 2,500-record limit. |
+| `nameservers-ours` | warning | the domain is delegated to nameservers we do not operate, or to a mix of ours and someone else's -- so the zone you are inspecting is not what the world resolves. Writes to it keep succeeding and change nothing visible. |
 | `cloudflare-zone` | info | the zone is served through Cloudflare, which can lag briefly after a delegation change. |
 
 | Parameter | In | Required | Description |
@@ -2360,6 +2377,7 @@ Response fields (DnsRestoreResponse):
 
 | Field | Type | Description |
 |---|---|---|
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 | `status` | string |  |
 | `domain` | string |  |
 | `restoredFrom` | integer | The restore point used. |
@@ -2423,6 +2441,7 @@ Response fields:
 | `skipped` | integer | Already present, so nothing needed doing. |
 | `failed` | integer |  |
 | `failures` | object[] |  |
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 
 ## POST /api/json/v3/dns/getDnssecRecords/{domain}
 
@@ -2509,10 +2528,10 @@ Response fields:
 
 | Field | Type | Description |
 |---|---|---|
+| `warnings` | string[] | Present only when a value was accepted but is being retired, e.g. a digest type the registry has announced it will stop accepting. Advisory: the record was created. |
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
-| `warnings` | string[] | Present only when a value was accepted but is being retired, e.g. a digest type the registry has announced it will stop accepting. Advisory: the record was created. |
 
 ## POST /api/json/v3/dns/deleteDnssecRecord/{domain}/{keytag}
 
@@ -2535,6 +2554,7 @@ Response fields (BasicResponse):
 
 | Field | Type | Description |
 |---|---|---|
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
@@ -2719,6 +2739,7 @@ Response fields (BasicResponse):
 
 | Field | Type | Description |
 |---|---|---|
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
@@ -2799,6 +2820,7 @@ Response fields (BasicResponse):
 
 | Field | Type | Description |
 |---|---|---|
+| `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 | `status` | string |  |
 | `message` | string | Human-readable message. Present on ERROR, sometimes on SUCCESS. |
 | `code` | string | Machine-readable error code. Present when status is ERROR. |
