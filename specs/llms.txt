@@ -84,9 +84,11 @@ Repo: https://github.com/oborseth/Porkbun-MCP — configure with `PORKBUN_API_KE
 
 ## Quickstart (agentic domain registration)
 
+0. Fund the account: **buying over the API spends prepaid account credit; a purchase never charges a card on its own.** Check with `GET /account/balance`. If the account already has a saved payment method, `POST /account/topup` charges it and adds the credit in one call, and `POST /account/autoTopup` makes that automatic below a threshold you set. Otherwise add credit at https://porkbun.com/account/credit — a card can only be saved on the website. Also verify the account's email and phone, which registration requires.
 1. Check availability + price: `POST https://api.porkbun.com/api/json/v3/domain/checkDomain/{domain}`
-2. Register: `POST /domain/create/{domain}` with `cost` (price in pennies as integer, must match the quote), `agreeToTerms: "yes"`, and an `Idempotency-Key` header
-3. Add DNS: `POST /dns/create/{domain}` with `type`, `content`, optional `ttl`
+2. Rehearse: the same `/domain/create` call with `dryRun: true` (and `cost: 0` if you want to be quoted) returns `wouldSucceed`, `cost`, `balance` and, if you are short, `shortfall` — charging nothing
+3. Register: `POST /domain/create/{domain}` with `cost` (price in pennies as integer, must match the quote), `agreeToTerms: "yes"`, and an `Idempotency-Key` header
+4. Add DNS: `POST /dns/create/{domain}` with `type`, `content`, optional `ttl`
 
 ## Authentication
 
@@ -118,7 +120,7 @@ Index: https://porkbun.com/llms/guides
 - `POST /domain/checkDomain/{domain}` — availability + price (registration, renewal, transfer). Rate limited to 10 checks per 10 seconds per account by default (a 10-second window, so a batch of candidate names can go back-to-back); `limits` in the response reports what is left
 - `POST /domain/checkDomain` with `{"domains": [...]}` — **check up to 25 at once, and prefer this over looping the single form.** Separate budget of 200 domains per 60 seconds (counted per domain, not per call), because checks are chunked per registry and a batch costs us less than the same names one at a time. Returns `domains` keyed by name, plus `invalid` (not checkable — one typo does not fail the call) and `unresolved` (the registry did not answer; this is NOT "unavailable", retry them). Over 25 returns `BULK_CHECK_TOO_MANY` and checks nothing. Synchronous, no polling: ~3s for 25 mixed TLDs, but a batch heavy in low-cap TLDs (.de is one per command) is refused with `BULK_CHECK_TOO_SLOW` rather than risking a truncated response.
 - `GET /domain/getRegistrationRequirements/{tld}` — is the TLD API-registerable + the create-request body as JSON Schema + any registry eligibility fields (e.g. .us nexus, .ca legal type). Call before create to validate eligibility/payload
-- `POST /domain/create/{domain}` — register
+- `POST /domain/create/{domain}` — register. Paid from prepaid account credit (never a card on file), so fund the account first; a single API registration is capped at $100 (`ORDER_TOO_LARGE`) and premium names are website-only
 - `POST /domain/renew/{domain}` — renew
 - `POST /domain/transfer/{domain}` — initiate inbound transfer (needs `authCode`)
 - `GET /domain/getTransfer/{domain}` , `GET /domain/listTransfers` — transfer status
@@ -144,6 +146,8 @@ Index: https://porkbun.com/llms/guides
 
 - `GET/POST /ssl/retrieve/{domain}` — SSL bundle
 - `GET /account/balance` — account credit balance
+- `GET|POST /account/autoTopup` — read or set top-up settings. `amount` (what a top-up adds) stands alone: `{"amount": 10000}` sets it without automating anything, because `POST /account/topup` charges the same figure. Add `enabled: true` + `threshold` to also fire it automatically when the balance falls below that; `enabled: false` stops the automation and keeps the amount. Amounts set over the API are capped at $500 ($5 floor); one the account holder sets on the website is honoured as-is. `paymentMethodOnFile: false` means the settings are inert — a card can only be saved on the website
+- `POST /account/topup` — **charge the saved payment method now** and add the credit, for when you are already stuck on `INSUFFICIENT_FUNDS`. `amount` (integer US cents, 500-50000) is optional: omit it and you get the account's configured top-up amount, or $50 if none was ever set (`amountSource` says which of configured/default/request applied). Passing one charges that figure for this call only and does NOT rewrite the stored setting — use it rather than calling /account/autoTopup to set an amount you only need once. An amount set via the API is capped at $500. Monthly dollars are capped too: the account's monthly spend limit bounds top-ups as well as domain spend, and an account with no limit set gets a $100/month top-up ceiling (`monthlyCeiling` / `ceilingSource` on `GET /account/autoTopup`). Also 5 top-ups per day and 20 per month (`TOPUP_LIMIT_EXCEEDED`), `NO_PAYMENT_METHOD` when there is nothing to charge, `CARD_DECLINED` when the card refuses. Sandbox keys get simulated credit. Supports `dryRun`
 - `GET /account/apiSettings` — spend-control settings + current month spend
 - `POST /marketplace/getAll` — marketplace listings with filters
 - `GET /closeout/search` — search expired-domain closeouts. Filters: `query`, `tld`, `nameLength`, `ageMin`/`ageMax`, `priceMin`/`priceMax` (cents), `start`/`limit`; sort by `domain|endTime|price|revenue|visitors|inboundLinks|registrationDate` × `asc|desc` (`registrationDate` + `asc` = OLDEST first, which is how you find aged names; `asc` on revenue/visitors/inboundLinks lists no-data rows first, so use `desc` there). Returns `age` and `registrationDate` on every row, plus `totalAvailable` for paging. `price` is the closeout price ALONE
@@ -231,13 +235,15 @@ Pick the product with the `sku` you pass to `/hosting/create`: **Secure Static H
 - `RATE_LIMIT_EXCEEDED` — HTTP 429; wait the seconds in the `Retry-After` header (also `ttlRemaining` / `X-RateLimit-Reset`)
   Every authenticated response carries `X-RateLimit-Limit` / `-Remaining` / `-Reset` / `-Window` for a general per-key request budget (20 per 2 seconds). While `X-RateLimit-Mode: observe` is present that budget is measured but **not** enforced, so exhausting it does not fail a request; per-operation limits still do.
 - `MONTHLY_SPEND_LIMIT_EXCEEDED` — would exceed the account's API spend cap
-- `INSUFFICIENT_FUNDS` — not enough account credit
+- `INSUFFICIENT_FUNDS` — not enough **prepaid account credit**; a purchase does not charge a saved card by itself, so having one is not enough on its own — call `POST /account/topup` to convert it into credit first. The response carries `cost`, `balance` and `shortfall` in cents and the message names where to top up and how to enable auto top-up
+- `COST_MISMATCH` — `cost` must equal the current price in cents for the term being bought; the message names the expected value, and `dryRun` + `cost: 0` quotes it
 - `DOMAIN_NOT_FOUND` / `INVALID_DOMAIN` — domain not in your account / invalid
 - `INVALID_TYPE` — unsupported DNS record type
 - `CLOSEOUT_NOT_FOUND` / `CLOSEOUT_UNAVAILABLE` — not offered as a closeout / already claimed by another buyer
 - `CLOSEOUT_NOT_ELIGIBLE` — the account is blocked from auctions/closeouts by support (past-due invoices or an auction terms violation); not retryable. There is no account-age or prior-order requirement — closeout eligibility is the same as registration plus verified email and phone
 - `TRANSFER_INIT_FAILED` — the transfer could not be started and the order was refunded automatically; **not** a credentials or verification problem
 - `TRANSFER_HOLD_NOT_AVAILABLE` — `holdForDnsSetup` unsupported for this TLD; nothing charged, resend without it
+- `REGISTRANT_EMAIL_NOT_ACCEPTED` — the registry (currently .in and its second levels) refuses registrant contacts on temporary or encrypted email providers and suspends domains that use one; nothing was charged. Change the email on the account's default registrant contact and retry. This is about the contact on the domain, not about who hosts mail for it
 - `TRANSFER_ZONE_EMPTY` — releasing would move the domain to an empty zone; import records first or pass `force: true`
 - `TRANSFER_STATE_UNCONFIRMED` — the registry would not confirm the cancellation, so nothing was refunded and the transfer was left intact
 - `DUPLICATE_RECORD` — that exact name/type/content already exists; nothing was created, and `existingId` holds the id of the record that does

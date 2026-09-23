@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.34
+# Porkbun API v3 — v3.39
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -138,7 +138,13 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 |------|---------|
 | `INVALID_DOMAIN` | Domain parameter is invalid or not in your account |
 | `DOMAIN_NOT_AVAILABLE` | Domain is not available for registration |
-| `INSUFFICIENT_FUNDS` | Account credit is insufficient to complete the purchase |
+| `INSUFFICIENT_FUNDS` | Not enough **prepaid account credit**. API purchases never charge a card on file, so a saved card does not help - the balance has to cover the price first. The response carries `cost`, `balance` and `shortfall` in cents. Top up at porkbun.com/account/credit, or enable auto top-up in API settings |
+| `COST_MISMATCH` | `cost` did not equal the current price in cents for the term being bought; the message names the expected value. Send `dryRun: true` with `cost: 0` to be quoted |
+| `ORDER_TOO_LARGE` | A single API registration cannot exceed $100. Register it on the website |
+| `NO_PAYMENT_METHOD` | `POST /account/topup` had no saved payment method to charge. A card can only be saved on the website |
+| `TOPUP_LIMIT_EXCEEDED` | The account hit the per-day (5) or per-month (20) ceiling on API top-ups. Nothing was charged |
+| `CARD_DECLINED` | The saved card was declined on a top-up. No credit was added |
+| `TOPUP_FAILED` | A top-up did not complete and nothing was charged. Retryable |
 | `REGISTRANT_CHANGE_NOT_SUPPORTED` | A registrant name/org change on a .au domain is a paid auDA ownership trade - do it at porkbun.com; admin/tech/billing edits work via the API |
 | `ADDRESS_VALIDATION_REQUIRED` | The registrant address for an address-validated TLD needs validation; re-submit with addressValidationChoice using the returned suggestedAddress |
 
@@ -159,6 +165,7 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 | `BULK_CHECK_TOO_SLOW` | The bulk check's mix of TLDs would need more sequential registry commands than one request can safely wait on (some registries accept only a few domains per command; .de accepts one). Nothing was checked. `registryCommandsNeeded` and `maxRegistryCommands` are in the response. HTTP 400. |
 | `TRANSFER_INIT_FAILED` | The transfer could not be started; the order is refunded automatically. Not a credentials or verification problem. HTTP 400. |
 | `TRANSFER_HOLD_NOT_AVAILABLE` | `holdForDnsSetup` is not supported for this TLD (.uk, Handshake). Nothing was charged; resend without the flag. |
+| `REGISTRANT_EMAIL_NOT_ACCEPTED` | The registry for this TLD (currently .in and its second levels) refuses registrant contacts on temporary or encrypted email providers, and suspends domains that use one. Nothing was charged. Change the email on your default registrant contact, then retry. |
 | `TRANSFER_NOT_FOUND` | No pending inbound transfer for that domain on this account. |
 | `TRANSFER_NOT_HELD` | `/domain/startTransfer` on a transfer that is not held at `PENDINGDNS`. |
 | `TRANSFER_ZONE_EMPTY` | Releasing would move the domain to an empty Porkbun zone. Import the records first, or resend with `force: true`. |
@@ -332,6 +339,32 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.39
+
+- **`POST /account/topup` takes an optional `amount`.** Omitted, it charges the configured amount exactly as before. Supplied (500–50000 cents), it charges that for one call without touching the stored setting — previously an agent that needed a different figure had to rewrite the customer's saved top-up amount first, which is a worse outcome than letting it name a number. The monthly ceiling and daily caps apply either way, and `amountSource` reports which figure was used.
+
+### v3.38
+
+- **The top-up amount is now a setting in its own right.** `POST /account/autoTopup` accepts `{"amount": <cents>}` with no `enabled`, and `enabled: false` no longer clears it — switching auto top-up off means stop firing on a threshold, not forget how much. `POST /account/topup` charges that same figure, so the two were never really separate settings. The website says the same thing: Account Settings → API now reads "Top-Up Settings" with "Top-Up Amount" always visible, and the trigger balance tucked under the Auto Top-Up switch.
+- **Top-ups are bounded in dollars, not just in frequency.** An account's monthly spend limit now caps what `POST /account/topup` can charge in a calendar month, and an account with no limit set gets a $100/month ceiling rather than none. Domain spend is unchanged: an unset limit still means no cap there.
+
+### v3.37
+
+- **Account credit can be topped up over the API.** `POST /account/topup` charges the saved payment method and adds the credit immediately, so an agent that runs out mid-task can fund itself instead of stopping until a human visits the website. `GET|POST /account/autoTopup` reads and sets auto top-up, which until now could only be configured in the browser.
+- **The caller does not choose the amount.** A top-up charges the account's configured auto top-up amount, or $50 if none has ever been set. An amount set through the API is capped at $500; an amount the account holder sets on the website is honoured as-is. Top-ups are limited to 5 a day and 20 a month, only a payment method saved outside the API can be charged, and every successful charge emails the account holder.
+- New error codes: `NO_PAYMENT_METHOD`, `TOPUP_LIMIT_EXCEEDED`, `CARD_DECLINED`, `TOPUP_FAILED`, each with a `next_action`.
+
+### v3.36
+
+- **`INSUFFICIENT_FUNDS` now says what to do about it.** It used to be the two words "No funds." The response now carries `cost`, `balance` and `shortfall` in cents, and a message naming the price, the balance, the gap, the fact that API purchases are paid from prepaid credit rather than a card on file, where to top up, and how to turn on auto top-up. Same treatment on `/domain/create`, `/domain/renew` and `/domain/transfer`.
+- **A dry run is no longer refused for being broke.** The funds check short-circuited `dryRun: true`, so the rehearsal that exists to tell you what an order needs was the one thing you could not get when the balance was short. A dry run now runs to completion and reports `wouldSucceed: false` with `shortfall`. It still charges nothing and still consumes no rate-limit budget.
+- **`dryRun` with `cost: 0` returns a quote on `/domain/create` and `/domain/renew`**, matching `/domain/transfer` and `/closeout/buy`. A caller who does not know the price no longer has to guess one in order to be told it is wrong.
+- **`COST_MISMATCH` is a code on all three endpoints** (registration previously returned an uncoded message) and the expected cost is named in cents and dollars.
+
+### v3.35
+
+- **`POST /domain/transfer/{domain}` can now return `REGISTRANT_EMAIL_NOT_ACCEPTED`.** Some registries refuse registrant contacts that use temporary or encrypted email providers and suspend domains that use one; .in and its second levels are the first. The transfer is refused before any charge. Change the email on the default registrant contact for the account and retry. This concerns the contact recorded on the domain, not who hosts mail for it.
 
 ### v3.34
 
@@ -800,11 +833,19 @@ Response fields (CheckDomainResponse):
 
 Register a domain using account credit. Requirements:
 - Account email and phone must be verified
-- Account must have sufficient credit
+- The account must hold enough **prepaid credit** to cover the price (see "Paying for it" below)
 - `agreeToTerms` must be `'yes'` or `'1'`
 - `cost` must equal the current price for the domain's minimum registration duration (in pennies)
-- Account must have placed at least one previous domain registration
-- Premium domains cannot be registered via API
+- Premium domains cannot be registered via API, and a single order cannot exceed $100 (`ORDER_TOO_LARGE`)
+
+## Paying for it
+
+**API purchases are paid from prepaid account credit. No card on file is charged at purchase time** - the thing most first-time callers get wrong, because having a card saved is not enough; the balance has to be there before the call. Three ways to deal with it:
+- Read the balance with `GET /account/balance` (cents, plus a display string) and top up at https://porkbun.com/account/credit.
+- Turn on **auto top-up** at https://porkbun.com/account/api so a saved payment method refills the balance when it drops below a threshold you set. This is the hands-off option for an agent that registers on its own.
+- Rehearse with `dryRun: true`, which reports `cost`, `balance`, `sufficientFunds` and, when short, `shortfall`.
+
+A purchase attempted without enough credit returns `INSUFFICIENT_FUNDS` carrying `cost`, `balance` and `shortfall` in cents, and a message naming all three.
 
 Registrations are always for the registry-minimum duration (usually 1 year).
 
@@ -818,7 +859,7 @@ Both limits are configurable per API key and their current values are returned i
 
 ## Dry run
 
-Add `dryRun: true` to validate everything and preview the cost WITHOUT registering or charging — nothing is created. Example response:
+Add `dryRun: true` to validate everything and preview the cost WITHOUT registering or charging — nothing is created. Send `cost: 0` with it to be quoted rather than having to match a price you do not know yet, and note that a dry run is answered even when the balance is too low: `wouldSucceed` comes back false with `shortfall` saying by how much. Example response:
 
 ```json
 {
@@ -941,6 +982,8 @@ Add `dryRun: true` to validate everything and preview the cost WITHOUT renewing 
 }
 ```
 
+**Paying for it.** Paid from **prepaid account credit** — no card on file is charged at purchase time. Read the balance with `GET /account/balance`, top up at https://porkbun.com/account/credit, or turn on auto top-up at https://porkbun.com/account/api. Too little credit returns `INSUFFICIENT_FUNDS` with `cost`, `balance` and `shortfall` in cents. `dryRun: true` reports all three without charging, and `dryRun` with `cost: 0` returns a quote.
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
@@ -1008,6 +1051,7 @@ Initiates an inbound domain transfer to Porkbun using account credit. The transf
 - No other active transfer for the same domain.
 - `.uk` and manage-only TLDs are not supported via API.
 - Premium domain transfers are not supported via API.
+- Some registries refuse registrant contacts on temporary or encrypted email providers and suspend domains that use one. `.in` and its second levels are the first; a transfer whose registrant contact uses one is refused with `REGISTRANT_EMAIL_NOT_ACCEPTED` before any charge. This is about the contact recorded on the domain, not about who hosts mail for it.
 
 ## Dry run
 
@@ -1032,6 +1076,8 @@ Add `dryRun: true` to validate everything and preview the cost WITHOUT initiatin
   "requestId": "019e04fa-5f22-7c93-8a41-2e9d0b3f6c77"
 }
 ```
+
+**Paying for it.** Paid from **prepaid account credit** — no card on file is charged at purchase time. Read the balance with `GET /account/balance`, top up at https://porkbun.com/account/credit, or turn on auto top-up at https://porkbun.com/account/api. Too little credit returns `INSUFFICIENT_FUNDS` with `cost`, `balance` and `shortfall` in cents. `dryRun: true` reports all three without charging, and `dryRun` with `cost: 0` returns a quote.
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -2932,6 +2978,112 @@ Response fields:
 | `status` | string |  |
 | `token` | string | Short-lived session token (5 minutes) |
 | `expiration` | string |  |
+
+## GET /api/json/v3/account/autoTopup
+
+**Read auto top-up settings**
+
+What auto top-up is set to, whether a payment method is on file, and what `POST /account/topup` would charge right now (`effectiveAmount`).
+
+Auto top-up is how unattended work stops dead-ending on `INSUFFICIENT_FUNDS`: when an order drops the balance below `threshold`, Porkbun charges the saved payment method for `amount` and adds the credit.
+
+If `paymentMethodOnFile` is false the settings are inert and the response says so in `warnings` — a card can only be saved on the website, never over the API.
+
+Response fields (AutoTopupResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `enabled` | boolean |  |
+| `threshold` | integer | Balance in cents below which a top-up fires; null when auto top-up is off. |
+| `amount` | integer | Configured amount to add, in cents; null when never set. |
+| `effectiveAmount` | integer | What POST /account/topup would charge right now: the configured amount, or the $50 default. |
+| `defaultAmount` | integer | The platform default used when the account has configured nothing. |
+| `paymentMethodOnFile` | boolean | False means nothing can be charged and auto top-up cannot fire, whatever the settings say. |
+| `balance` | integer | Current account credit, in cents. |
+| `chargesToday` | integer |  |
+| `chargesThisMonth` | integer |  |
+| `maxChargesPerDay` | integer |  |
+| `maxChargesPerMonth` | integer |  |
+| `warnings` | string[] | Advisory. Present when the settings cannot do anything as they stand, e.g. no payment method is saved. |
+
+## POST /api/json/v3/account/autoTopup
+
+**Configure auto top-up**
+
+Set the top-up amount, and/or switch auto top-up on or off.
+
+`amount` stands on its own. It is what a top-up adds, and `POST /account/topup` charges the same figure on demand, so setting it without automating anything is a normal call: `{"amount": 10000}`.
+
+`enabled: true` additionally makes it fire by itself and requires `threshold` (the balance, in integer US cents, below which a top-up happens) plus an amount — either in the same call or already on file. `enabled: false` stops it firing on a threshold and **keeps the amount**, because on-demand top-ups still use it.
+
+**`amount` set over the API is capped at $500** ($5 minimum), because that value is also what `POST /account/topup` charges — an API key free to set it to anything would be setting its own limit, which is not a limit. A larger amount set by the account holder at porkbun.com/account/api is honoured as-is.
+
+No card is touched here, and one cannot be added over the API. Supports `dryRun`.
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `enabled` | boolean | yes | Turn auto top-up on or off. Omit to change only the amount. |
+| `threshold` | integer | no | Balance in integer US cents below which a top-up fires. Required when enabling, and meaningless without it. |
+| `amount` | integer | no | What a top-up adds, in integer US cents. Can be sent on its own; required when enabling if none is on file. Over the API: 500-50000. |
+| `dryRun` | boolean | no | Validate only; change nothing. |
+
+Response fields (AutoTopupResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `enabled` | boolean |  |
+| `threshold` | integer | Balance in cents below which a top-up fires; null when auto top-up is off. |
+| `amount` | integer | Configured amount to add, in cents; null when never set. |
+| `effectiveAmount` | integer | What POST /account/topup would charge right now: the configured amount, or the $50 default. |
+| `defaultAmount` | integer | The platform default used when the account has configured nothing. |
+| `paymentMethodOnFile` | boolean | False means nothing can be charged and auto top-up cannot fire, whatever the settings say. |
+| `balance` | integer | Current account credit, in cents. |
+| `chargesToday` | integer |  |
+| `chargesThisMonth` | integer |  |
+| `maxChargesPerDay` | integer |  |
+| `maxChargesPerMonth` | integer |  |
+| `warnings` | string[] | Advisory. Present when the settings cannot do anything as they stand, e.g. no payment method is saved. |
+
+## POST /api/json/v3/account/topup
+
+**Top up account credit now**
+
+**Charges the saved payment method** and adds the money to account credit immediately. The call that unblocks work already in progress: enabling auto top-up does nothing until the next order trips the threshold, which is no help to a caller holding an `INSUFFICIENT_FUNDS` response right now.
+
+**`amount` is optional.** Omitted, it charges the account's configured top-up amount, or $50 if the account has never set one — `amountSource` in the response says which of `configured`, `default` or `request` applied. Supplied, it charges that figure for this call only and leaves the stored setting alone, which is the point: an agent could always have written the amount to `/account/autoTopup` first, and making it do that turns a one-off charge into a silent edit of a setting the customer owns.
+
+The card itself can only be saved outside the API, and a supplied amount is held to the same 500–50000 cent range as one set through `/account/autoTopup`. On top of that the dollars are bounded by the month: the account's **monthly spend limit** caps top-ups as well as domain spend (it is the account saying how much the API may move, and a card charge is the API moving money), and an account that has never set one still gets a $100/month ceiling — `monthlyCeiling` and `ceilingSource` on `GET /account/autoTopup` say which is in force. Top-ups are also limited to 5 per day and 20 per month (`TOPUP_LIMIT_EXCEEDED`), and every successful charge emails the account holder.
+
+Errors that matter: `NO_PAYMENT_METHOD` (nothing saved to charge — the account holder has to save a card or buy credit on the website), `CARD_DECLINED` (nothing was added; the card needs attention), `TOPUP_FAILED` (nothing was charged; retry once).
+
+With a sandbox key this grants simulated credit and charges nothing (`simulated: true`). Supports `dryRun`, which previews the amount and charges nothing in any environment. Honours `Idempotency-Key`.
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `amount` | integer | no | Optional one-off amount in integer US cents (500-50000). Omit to charge the amount the account has configured, which is the common case. A supplied amount does NOT change the stored setting — use it instead of rewriting the customer's configuration for a single charge. |
+| `dryRun` | boolean | no | Preview the charge without making it. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `charged` | integer | Amount charged, in cents. |
+| `chargedDisplay` | string |  |
+| `balance` | integer | Account credit balance after the top-up, in cents. |
+| `balanceDisplay` | string |  |
+| `orderId` | integer | The captured order recorded for the purchase, 0 if order creation failed (the credit is granted either way). |
+| `usedDefaultAmount` | boolean | True when the account had no configured amount and the $50 default was charged. |
+| `chargesToday` | integer |  |
+| `chargesThisMonth` | integer |  |
+| `simulated` | boolean | Sandbox only: credit was granted without charging a card. |
+| `message` | string |  |
 
 ## POST /api/json/v3/account/invite
 
