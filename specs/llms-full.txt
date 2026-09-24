@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.39
+# Porkbun API v3 — v3.42
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -138,7 +138,7 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 |------|---------|
 | `INVALID_DOMAIN` | Domain parameter is invalid or not in your account |
 | `DOMAIN_NOT_AVAILABLE` | Domain is not available for registration |
-| `INSUFFICIENT_FUNDS` | Not enough **prepaid account credit**. API purchases never charge a card on file, so a saved card does not help - the balance has to cover the price first. The response carries `cost`, `balance` and `shortfall` in cents. Top up at porkbun.com/account/credit, or enable auto top-up in API settings |
+| `INSUFFICIENT_FUNDS` | Not enough **prepaid account credit**. A purchase never charges a card by itself, but `POST /account/topup` can charge a saved card and add credit in one call. The response carries `cost`, `balance` and `shortfall` in cents, plus `topUpAvailable` (whether a saved card can be charged now) and, when true, `topUpAmountToCover`; `next_action.type` is `top_up` or `add_funds` accordingly. Dry runs report the same fields |
 | `COST_MISMATCH` | `cost` did not equal the current price in cents for the term being bought; the message names the expected value. Send `dryRun: true` with `cost: 0` to be quoted |
 | `ORDER_TOO_LARGE` | A single API registration cannot exceed $100. Register it on the website |
 | `NO_PAYMENT_METHOD` | `POST /account/topup` had no saved payment method to charge. A card can only be saved on the website |
@@ -339,6 +339,19 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.42
+
+- **`INSUFFICIENT_FUNDS` says whether a top-up can fix it.** Every insufficient-funds response (registration, renewal, transfer, closeout, hosting) and every short dry run now carries `topUpAvailable`: true when a card is saved on the account, so `POST /account/topup` can charge it and add the credit right now. When true, `topUpAmountToCover` is the smallest top-up that covers the order and `next_action.type` is the new **`top_up`**; when false it is `add_funds` with the website link. Before this, the message only pointed at the website, and a live agent told a user with a saved card to go and buy credit by hand.
+
+### v3.41
+
+- **`INVALID_STATE`**: on a TLD whose registry validates the contact's state (the .mx family today), a state we cannot match is refused before the command is built, and the error carries every accepted value for that country in `validStates`. Checked against real traffic before enabling: of 2,182 contacts .mx has accepted on our .mx domains, the gate blocks none.
+
+### v3.40
+
+- **Contact `state` is now normalised the way the website's dropdown does it.** The API used to uppercase it, which broke every contact update on `.mx`: the registry validates the field case sensitively and wants `Ciudad de México` for Mexico City, and the translation table that produces that is keyed on the canonical name, so `MEXICO CITY` missed it and `NEW JERSEY` was refused outright. `state` is now matched against the country's official list by name or short code, ignoring case and accents.
+- **A contact the registry refuses no longer produces a broken update.** When contact creation failed, the domain update went out anyway with empty handles — the registry saw an add with no contact in it next to a real remove. It was refused here with an opaque syntax error; a more permissive registry would have stripped the domain's contacts and added none. The update is now abandoned and the response names what the registry actually objected to, with no contacts changed.
 
 ### v3.39
 
@@ -1832,6 +1845,8 @@ Response fields:
 **Update domain contacts**
 
 Edit the domain's contacts. Send a `contacts` object keyed by role (`registrant`, `admin`, `tech`, `billing`) containing ANY subset of roles — unspecified roles keep their current values — or a single `contact` object to apply to all four. Behaves like the website: on thick TLDs the change is pushed to the registry, and a **registrant** change (name/organization/email) triggers the same material-change record and new-owner notice/verification email (no 60-day transfer lock is imposed). Per-TLD extension data (e.g. .us nexus, .ca legalType) is preserved. Supports `dryRun`.
+
+**`state` is matched against the official list for the country**, the same list the website's dropdown is built from, so case, accents and short codes all work: `NEW JERSEY`, `new jersey` and `NJ` are all stored as `New Jersey`, and `MEXICO CITY` as `Mexico City`. This matters because some registries validate the field and compare it case sensitively — .mx refuses `NEW JERSEY` and requires `Ciudad de México` for Mexico City, which Porkbun substitutes for you. For a TLD whose registry validates the field (currently the .mx family) a state that matches nothing is refused up front with `INVALID_STATE`, and the response lists every accepted value for that country in `validStates` — better than the registry's own "Object does not exist". For every other TLD an unrecognised state is sent through unchanged rather than rewritten. If a registry then refuses it, the contact is NOT created and no contacts are changed; the error names the registry's complaint.
 
 **Address-validated TLDs.** On a **registrant** change for a TLD that requires a validated address (`.de`, `.nrw`, `.uk`/`.co.uk`/…, `.us`, `.ca`, `.nyc`, `.au`, `.eu`, `.in`/`.co.in`/…, `.nz`/`.co.nz`/…), the API runs Google Address Validation (per-account rate-limited + 24h cached). If the address needs correction the call returns `ADDRESS_VALIDATION_REQUIRED` with a `suggestedAddress` and `addressValidationStatus`; re-submit with `addressValidationChoice` = `accept_suggestion` (save the standardized address) or `use_as_entered` (keep yours — stays blocked if a real correction was offered). For `.de`, DENIC registry verification is then attempted automatically (address-fingerprint / email); if it still needs a proof-of-address document upload, that is completed at porkbun.com. **Still not supported via API:** a registrant name/organization change on a `.au` domain is an auDA paid ownership trade and returns `REGISTRANT_CHANGE_NOT_SUPPORTED` (do it at porkbun.com). Admin/tech/billing edits are unaffected everywhere.
 
