@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.42
+# Porkbun API v3 — v3.43
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -75,6 +75,7 @@ Repo and Claude Desktop config: [github.com/oborseth/Porkbun-MCP](https://github
 
 - **Machine-readable error codes** — Every error response includes a `code` field (e.g. `INVALID_DOMAIN`, `INSUFFICIENT_FUNDS`) for programmatic branching
 - **Header authentication** — Pass `X-API-Key` / `X-Secret-API-Key` as request headers; no JSON body required for read operations
+- **Hosted MCP connector (ChatGPT, Claude)** — `https://mcp.porkbun.com/mcp` serves this API as MCP tools with a browser sign-in instead of keys (OAuth 2.1 + PKCE; guide: https://porkbun.com/llms/guides/connect-chatgpt-or-claude). Each connection is its own API key, listed at /account/api as "(connected app)", and its `pbo_at_` access tokens are accepted here as `Authorization: Bearer`, for MCP clients rather than as a general way to call the API. Variants for app-directory listings: `/mcp/no-topups` and `/mcp/no-purchases`
 - **GET support on read endpoints** — All read-only endpoints accept `GET` requests, making safe/idempotent operations distinguishable by HTTP method
 - **Rate limit headers** — `Retry-After` (seconds to wait) on every 429, plus `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` on rate-limited endpoints, enable intelligent backoff
 - **Spec discovery** — Every API response includes `Link: <https://porkbun.com/api/json/v3/spec>; rel="describedby"` so clients can self-discover this spec
@@ -339,6 +340,10 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.43
+
+- **`/pricing/get` filters by TLD on GET as well as POST.** `tld` (one) and/or `tlds` (an array, or comma-separated on GET): `?tld=io`, `?tlds=com,io,dev`. Case, a leading dot and IDN form (Unicode or punycode) are all handled. Two bugs that returned `SUCCESS` with wrong data are fixed: `GET ?tlds=io` returned an empty `pricing`, and a TLD Porkbun does not sell was priced at $0.00. Unsold TLDs are now listed in a new `unsupported` array instead, and a filter with nothing sellable returns `INVALID_TLD` (HTTP 400).
 
 ### v3.42
 
@@ -665,18 +670,21 @@ Response fields (IpResponse):
 
 **Retrieve domain pricing (public)**
 
-Retrieve default domain pricing information for all supported TLDs. Does not require authentication. Prices are in US dollars.
+Retrieve default domain pricing information for all supported TLDs, or only the ones you ask for. Does not require authentication. Prices are in US dollars.
+
+Filter with `tld` (one TLD) and/or `tlds` (several). Names are case-insensitive, a leading dot is ignored, and IDN TLDs may be sent in Unicode or punycode (`みんな` or `xn--q9jyb4c`). A TLD Porkbun does not sell is left out of `pricing` and listed in `unsupported`; if none of the requested TLDs is sold the response is `INVALID_TLD` (HTTP 400). No filter returns every TLD.
 
 Request body fields:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `tlds` | string[] | no | Optional array of TLDs to filter results. If omitted, all supported TLDs are returned. |
+| `tld` | string | no | Optional single TLD to price, e.g. `io`. Combines with `tlds`. |
+| `tlds` |  | no | Optional TLDs to price: an array, or a comma-separated string. If neither `tld` nor `tlds` is given (or both are empty), all supported TLDs are returned. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/pricing/get \
   -H 'Content-Type: application/json' \
-  -d '{"tlds":[]}'
+  -d '{"tlds":["com","io"]}'
 ```
 
 Response fields:
@@ -684,15 +692,21 @@ Response fields:
 | Field | Type | Description |
 |---|---|---|
 | `status` | string |  |
+| `unsupported` | string[] | Present only when a filter named TLDs Porkbun does not sell: those names, as sent. They are not in `pricing`. |
 | `pricing` | object | Object keyed by TLD string |
 
 ## GET /api/json/v3/pricing/get
 
 **Retrieve domain pricing (public)**
 
-Retrieve default domain pricing information for all supported TLDs. Does not require authentication. Prices are in US dollars.
+Retrieve default domain pricing information for all supported TLDs, or only the ones you ask for. Does not require authentication. Prices are in US dollars.
 
-This GET form returns pricing for all TLDs. To filter by specific TLDs, use `POST /pricing/get` with a `tlds` array in the request body.
+Filter with `tld` (one TLD) and/or `tlds` (several). Names are case-insensitive, a leading dot is ignored, and IDN TLDs may be sent in Unicode or punycode (`みんな` or `xn--q9jyb4c`). A TLD Porkbun does not sell is left out of `pricing` and listed in `unsupported`; if none of the requested TLDs is sold the response is `INVALID_TLD` (HTTP 400). No filter returns every TLD. On GET, `tlds` is comma-separated: `?tlds=com,io,dev`.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `tld` | query | no | One TLD to price, e.g. `io`. |
+| `tlds` | query | no | Comma-separated TLDs to price, e.g. `com,io,dev`. Omit (with `tld`) for every TLD. |
 
 ```bash
 curl 'https://api.porkbun.com/api/json/v3/pricing/get'
@@ -703,6 +717,7 @@ Response fields:
 | Field | Type | Description |
 |---|---|---|
 | `status` | string |  |
+| `unsupported` | string[] | Present only when a filter named TLDs Porkbun does not sell: those names, as sent. They are not in `pricing`. |
 | `pricing` | object | Object keyed by TLD string |
 
 ## POST /api/json/v3/apikey/request
