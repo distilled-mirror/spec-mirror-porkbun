@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.43
+# Porkbun API v3 — v3.44
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -140,6 +140,9 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 | `INVALID_DOMAIN` | Domain parameter is invalid or not in your account |
 | `DOMAIN_NOT_AVAILABLE` | Domain is not available for registration |
 | `INSUFFICIENT_FUNDS` | Not enough **prepaid account credit**. A purchase never charges a card by itself, but `POST /account/topup` can charge a saved card and add credit in one call. The response carries `cost`, `balance` and `shortfall` in cents, plus `topUpAvailable` (whether a saved card can be charged now) and, when true, `topUpAmountToCover`; `next_action.type` is `top_up` or `add_funds` accordingly. Dry runs report the same fields |
+| `DNSSEC_CREATE_FAILED` | The registry refused the DS record; the message carries its reason and code |
+| `DNSSEC_DELETE_FAILED` | The registry did not accept the DS removal |
+| `DNSSEC_INFO_UNAVAILABLE` | The registry did not answer for the domain's DNSSEC records; retry |
 | `COST_MISMATCH` | `cost` did not equal the current price in cents for the term being bought; the message names the expected value. Send `dryRun: true` with `cost: 0` to be quoted |
 | `ORDER_TOO_LARGE` | A single API registration cannot exceed $100. Register it on the website |
 | `NO_PAYMENT_METHOD` | `POST /account/topup` had no saved payment method to charge. A card can only be saved on the website |
@@ -340,6 +343,12 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.44
+
+- **Glue and DNSSEC deletes are idempotent, as documented.** `deleteGlue` on a host that does not exist, and `deleteDnssecRecord` on a key tag (or domain) with nothing published, now return `SUCCESS` with a "nothing to delete" message instead of an error. A successful `deleteGlue` was also reported as `UPDATE_FAILED` (the registry answered success in a shape the code misread); fixed.
+- **`deleteDnssecRecord` matches the DS record by key tag.** It could remove the first key regardless of the key tag passed, or send a malformed removal when the key tag was not found.
+- **Registry reasons are passed through.** Glue create/update/delete failures (still `UPDATE_FAILED`) now carry the registry's reason, e.g. that an IP address is reserved. DNSSEC failures get stable codes: `DNSSEC_CREATE_FAILED`, `DNSSEC_DELETE_FAILED`, `DNSSEC_INFO_UNAVAILABLE`, each with a `next_action`.
 
 ### v3.43
 

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Porkbun API Documentation — domains, DNS, SSL &amp; hosting for developers and AI agents</title>
-  <meta name="description" content="The Porkbun API (v3.43) is a developer- and agent-friendly REST API to register, renew, transfer and manage domains, DNS &amp; DNSSEC, SSL certificates, email forwarding, the marketplace, static and WordPress hosting, Cloudflare connect, and outbound webhooks — with machine-readable errors, idempotency keys, a full OpenAPI spec, an official MCP server, and an isolated sandbox.">
+  <meta name="description" content="The Porkbun API (v3.44) is a developer- and agent-friendly REST API to register, renew, transfer and manage domains, DNS &amp; DNSSEC, SSL certificates, email forwarding, the marketplace, static and WordPress hosting, Cloudflare connect, and outbound webhooks — with machine-readable errors, idempotency keys, a full OpenAPI spec, an official MCP server, and an isolated sandbox.">
   <link rel="canonical" href="https://porkbun.com/api/json/v3/documentation">
   <meta name="robots" content="index, follow">
   <!-- Open Graph / Twitter for shareable, SEO-friendly previews -->
@@ -27,7 +27,7 @@
     "name": "Porkbun API",
     "abstract": "REST API to register and manage domains, DNS, DNSSEC, SSL, email forwarding, marketplace, static hosting, and webhooks.",
     "url": "https://porkbun.com/api/json/v3/documentation",
-    "softwareVersion": "3.43",
+    "softwareVersion": "3.44",
     "provider": { "@type": "Organization", "name": "Porkbun, LLC", "url": "https://porkbun.com" },
     "programmingModel": "REST/JSON",
     "documentation": "https://porkbun.com/api/json/v3/spec"
@@ -104,7 +104,7 @@
   <header class="brand">
     <div class="wrap">
       <div class="logo"><img src="/images/porkbun.comphpPkl2eU.svg" alt="Porkbun">porkbun<span>API</span></div>
-      <div class="meta">v3.43<a href="/">porkbun.com</a></div>
+      <div class="meta">v3.44<a href="/">porkbun.com</a></div>
     </div>
   </header>
 
@@ -151,7 +151,7 @@
         <div><strong>REST / JSON</strong><span>HTTPS only. Reads accept GET; writes are POST with a JSON body. Every response has a stable <code>status</code>.</span></div>
         <div><strong>Idempotency</strong><span>Send <code>Idempotency-Key</code> on any write; retries within 24h replay the original response — no double-charging.</span></div>
         <div><strong>Dry run</strong><span>Pass <code>dryRun: true</code> to rehearse a billable or destructive write (price, funds, eligibility) without performing it.</span></div>
-        <div><strong>Versioning</strong><span>Every response carries <code>X-API-Version</code> (currently 3.43). The path stays <code>/v3</code>; minor bumps are backward-compatible.</span></div>
+        <div><strong>Versioning</strong><span>Every response carries <code>X-API-Version</code> (currently 3.44). The path stays <code>/v3</code>; minor bumps are backward-compatible.</span></div>
         <div><strong>Request IDs</strong><span>An <code>X-Request-Id</code> header + <code>requestId</code> body field (UUIDv7) on every response for retries, logs, and support.</span></div>
       </div>
     </div>
@@ -160,7 +160,7 @@
   <section>
     <div class="wrap">
       <h2>Built for AI agents</h2>
-      <p class="sub">Agent-safety features so autonomous callers can act confidently.</p>
+      <p class="sub">Agent-safety features so autonomous callers can act confidently. For the whole picture, from connecting a chat app to the guardrails, see <a href="/ai-agents">Porkbun for AI agents</a>.</p>
       <div class="cols">
         <div><strong>Machine-readable errors</strong><span>Every error has a stable <code>code</code> plus a <code>next_action</code> object telling an agent how to recover (re-quote, add funds, enable a setting, …).</span></div>
         <div><strong>Registration requirements as JSON Schema</strong><span><code>GET /domain/getRegistrationRequirements/{tld}</code> returns the create payload and registry eligibility fields upfront.</span></div>
@@ -214,7 +214,7 @@
   <footer>
     <div class="wrap">
       <p>Authenticate with <code>X-API-Key</code> / <code>X-Secret-API-Key</code> headers, or <code>apikey</code> / <code>secretapikey</code> in the JSON body. API keys work whether or not account two-factor authentication is enabled.</p>
-      <p><a href="/">Porkbun</a> &nbsp;·&nbsp; <a href="/tlds">TLD pricing</a> &nbsp;·&nbsp; <a href="/support">Support</a> &nbsp;·&nbsp; <a href="/mcp">MCP server</a></p>
+      <p><a href="/">Porkbun</a> &nbsp;·&nbsp; <a href="/tlds">TLD pricing</a> &nbsp;·&nbsp; <a href="/support">Support</a> &nbsp;·&nbsp; <a href="/mcp">MCP server</a> &nbsp;·&nbsp; <a href="/ai-agents">For AI agents</a></p>
     </div>
   </footer>
 
