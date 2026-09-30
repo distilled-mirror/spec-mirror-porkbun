@@ -119,6 +119,7 @@ Task-oriented walkthroughs. Prose, not generated from the spec — they cover th
 - Dynamic DNS: keep an A record on your current IP: https://porkbun.com/llms/guides/dynamic-dns
 - Receive and verify webhooks: https://porkbun.com/llms/guides/verify-a-webhook
 - Verify a user owns a domain (DomainAttest): https://porkbun.com/llms/guides/verify-domain-ownership
+- Set up a customer's DNS for your service (DNS Connect: you send the records, the customer approves them on Porkbun; no password, no standing access): https://porkbun.com/llms/guides/connect-a-service-to-porkbun-dns
 - Connect ChatGPT or Claude (hosted MCP, no install): https://porkbun.com/llms/guides/connect-chatgpt-or-claude
 - Porkbun for AI agents (register domains and set up DNS from an agent; the guardrails): https://porkbun.com/ai-agents
 - Onboard a user in a mobile/native app (PKCE key handoff): https://porkbun.com/llms/guides/onboard-a-mobile-app-user
