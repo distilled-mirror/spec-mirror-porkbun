@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.44
+# Porkbun API v3 — v3.48
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -123,6 +123,8 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 | `INVALID_USER` | Account associated with the API key was not found or is not active |
 | `IP_NOT_ALLOWED` | This API key has an IP allowlist configured and the request source IP is not in it. HTTP 403. |
 | `DOMAIN_NOT_ALLOWED` | This API key has a domain allowlist configured and the target domain is not in it. HTTP 403. |
+| `INVOICE_NOT_FOUND` | No order with that ID belongs to this account (`/account/invoice*`). HTTP 404. |
+| `INVOICE_PDF_FAILED` | The invoice PDF could not be generated; retry, or use `GET /account/invoice/{orderId}`. HTTP 500. |
 
 | `MISSING_PARAMETER` | A required field or path segment is absent; the message names it |
 | `DOMAIN_NOT_FOUND` | The domain is not in this account (check the spelling, or list them with `/domain/listAll`) |
@@ -343,6 +345,22 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.48
+
+- **`/dns/edit` edits only what you send.** Any field left out now keeps the record's current value. Before, the edit replaced the whole record: leaving out `name` moved a subdomain record to the apex and reset `ttl` and `prio`, and leaving out `type` failed. An explicitly empty `name` still means the apex.
+
+### v3.47
+
+- **`API_ACCESS_DISABLED` everywhere.** `/dns/*`, `/ssl/*`, `/email/*` and a batch path in `/domain` answered a domain that is not opted in to API access without a stable `code` (you got one derived from the message text). They now return `API_ACCESS_DISABLED` with its `next_action`, like every other endpoint.
+
+### v3.46
+
+- **Invoice download links.** `GET /account/invoice/{orderId}` and `GET /account/invoicePdf/{orderId}` add `downloadUrl`, a link that downloads the PDF without signing in for 15 minutes (`downloadExpires`), so an integration or AI assistant can hand the user the file instead of reproducing it from base64. Each link is signed for one order and its account.
+
+### v3.45
+
+- **Invoices.** `GET /account/invoices` lists the account's invoices (filter by `year`, page with `start`/`limit`); `GET /account/invoice/{orderId}` returns one as data (bill-to, payment method, lines, gross/refunded/net totals); `GET /account/invoicePdf/{orderId}` returns the PDF, base64-encoded, identical to Download PDF on porkbun.com. New codes `INVOICE_NOT_FOUND` and `INVOICE_PDF_FAILED`.
 
 ### v3.44
 
@@ -2100,7 +2118,7 @@ Response fields:
 
 **Edit DNS record by ID**
 
-Edit a specific DNS record by its numeric ID. SOA and default Porkbun NS records cannot be edited.
+Edit a specific DNS record by its numeric ID. Send only the fields you want to change: any field left out keeps its current value (send `"name": ""` to move the record to the apex). SOA and default Porkbun NS records cannot be edited.
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -2112,8 +2130,8 @@ Request body fields:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `name` | string | no | Subdomain for the record. Do not include the domain name itself. |
-| `type` | string | yes | DNS record type |
-| `content` | string | yes | The record value |
+| `type` | string | no | DNS record type |
+| `content` | string | no | The record value |
 | `ttl` | integer | no | Time to live in seconds (optional) |
 | `prio` | integer | no | Priority for MX/SRV records (optional) |
 | `notes` | string | no | Notes (optional). Pass empty string to clear notes; omit or pass null to leave unchanged. |
@@ -3215,6 +3233,95 @@ Response fields (BalanceResponse):
 | `status` | string |  |
 | `balance` | integer | Available account credit balance in cents. |
 | `display` | string | Human-readable balance string (e.g. `$12.34`). |
+
+## GET /api/json/v3/account/invoices
+
+**List invoices**
+
+The account's invoices (one per order), newest first, like the orders page on porkbun.com. `total_cents` is what the customer was left paying: refunds are netted out, and `state` says whether the invoice is paid, refunded or partially refunded. Any of the account's API keys can read them.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
+| `X-API-Key` | header | no | API key header auth (use with X-Secret-API-Key) |
+| `X-Secret-API-Key` | header | no | Secret API key header auth (use with X-API-Key) |
+| `year` | query | no | Only invoices from this year, e.g. 2026. |
+| `start` | query | no | Offset for paging. |
+| `limit` | query | no |  |
+
+```bash
+curl 'https://api.porkbun.com/api/json/v3/account/invoices?year=2026' \
+  -H 'X-API-Key: pk1_...' \
+  -H 'X-Secret-API-Key: sk1_...'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `invoices` | object[] |  |
+| `total` | integer | How many invoices match (for paging). |
+| `start` | integer |  |
+| `limit` | integer |  |
+| `years` | integer[] | Years that have invoices. |
+
+## GET /api/json/v3/account/invoice/{orderId}
+
+**Get an invoice**
+
+One invoice as data: bill-to details, payment method (card brand and last four only), each line with its term and resulting domain expiry, and gross, refunded and net totals. The same figures as the PDF.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
+| `X-API-Key` | header | no | API key header auth (use with X-Secret-API-Key) |
+| `X-Secret-API-Key` | header | no | Secret API key header auth (use with X-API-Key) |
+| `orderId` | path | yes | Invoice (order) ID, from `GET /account/invoices`. |
+
+```bash
+curl 'https://api.porkbun.com/api/json/v3/account/invoice/9913779' \
+  -H 'X-API-Key: pk1_...' \
+  -H 'X-Secret-API-Key: sk1_...'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `invoice` | object |  |
+
+## GET /api/json/v3/account/invoicePdf/{orderId}
+
+**Download an invoice PDF**
+
+The invoice as a PDF, base64-encoded in `contentBase64`: the same document as Download PDF on porkbun.com. Decode it and save it as `filename`.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
+| `X-API-Key` | header | no | API key header auth (use with X-Secret-API-Key) |
+| `X-Secret-API-Key` | header | no | Secret API key header auth (use with X-API-Key) |
+| `orderId` | path | yes | Invoice (order) ID, from `GET /account/invoices`. |
+
+```bash
+curl 'https://api.porkbun.com/api/json/v3/account/invoicePdf/9913779' \
+  -H 'X-API-Key: pk1_...' \
+  -H 'X-Secret-API-Key: sk1_...'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `filename` | string |  |
+| `contentType` | string |  |
+| `sizeBytes` | integer |  |
+| `contentBase64` | string |  |
+| `downloadUrl` | string | Downloads the PDF without signing in, for 15 minutes (null on a sandbox key). The link to hand a user. |
+| `downloadExpires` | string | When downloadUrl stops working (ISO 8601). |
 
 ## GET /api/json/v3/account/apiSettings
 
