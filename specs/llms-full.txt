@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.48
+# Porkbun API v3 — v3.52
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -123,6 +123,13 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 | `INVALID_USER` | Account associated with the API key was not found or is not active |
 | `IP_NOT_ALLOWED` | This API key has an IP allowlist configured and the request source IP is not in it. HTTP 403. |
 | `DOMAIN_NOT_ALLOWED` | This API key has a domain allowlist configured and the target domain is not in it. HTTP 403. |
+| `HOSTING_DIR_NOT_EMPTY` | `/hosting/deleteFile` on a directory that still has files; `contents` lists them. Delete those first or send `recursive: true`. |
+| `MPP_NOT_AVAILABLE` | `/account/topupMpp`: the account cannot add credit through an agent card payment (e.g. bank-transfer-only). |
+| `MPP_UNAVAILABLE` | The payment link could not be created; nothing was charged. Retry. |
+| `CRYPTO_NOT_AVAILABLE` | `/account/topupCrypto`: the account cannot add credit with crypto via the API (new account, bank-transfer-only, or not eligible); the message says which. |
+| `CRYPTO_TOPUP_LIMIT` | `/account/topupCrypto`: 10 checkouts opened today. |
+| `CRYPTO_CHECKOUT_FAILED` | Coinbase did not create the checkout; nothing was charged. Retry. |
+| `CHECKOUT_NOT_FOUND` | No crypto checkout with that ID on this account. HTTP 404. |
 | `INVOICE_NOT_FOUND` | No order with that ID belongs to this account (`/account/invoice*`). HTTP 404. |
 | `INVOICE_PDF_FAILED` | The invoice PDF could not be generated; retry, or use `GET /account/invoice/{orderId}`. HTTP 500. |
 
@@ -345,6 +352,22 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.52
+
+- **Agents can top up with the user's card (MPP).** `POST /account/topupMpp` returns a signed, single-use link that an AI agent pays over the Machine Payments Protocol with a Stripe Shared Payment Token for the user's card (Stripe's Link Agent Wallet): HTTP 402 challenge, credential, credit added at once. No card needs to be saved at Porkbun. Same limits as card top-ups. New codes `MPP_NOT_AVAILABLE`, `MPP_UNAVAILABLE`.
+
+### v3.51
+
+- **Top up with USDC, payable by an AI agent (x402).** `POST /account/topupCrypto` opens a Coinbase checkout for account credit and returns `x402Url`, which an agent with a wallet pays directly (a gasless USDC transfer on Base), and `payUrl` for a person. `GET /account/topupCryptoStatus/{checkoutId}` reports when it is credited. A way past `INSUFFICIENT_FUNDS` for accounts with no saved card. New codes `CRYPTO_NOT_AVAILABLE`, `CRYPTO_TOPUP_LIMIT`, `CRYPTO_CHECKOUT_FAILED`, `CHECKOUT_NOT_FOUND`.
+
+### v3.50
+
+- **German, Austrian and Swiss states in their own languages.** Contact `state` now accepts local names and ISO 3166-2 codes for DE, AT and CH (`Bayern`, `BY`, `Thüringen`/`Thueringen`, `Wien`, `9`, `Genève`, `GR`, ...) and stores the canonical name (`Bavaria`, `Vienna`, `Geneva`). Before, `Bayern` and `BY` returned `INVALID_STATE`.
+
+### v3.49
+
+- **`/hosting/deleteFile` is idempotent and says why.** Deleting a path that is already gone returns `SUCCESS` with `alreadyAbsent: true` instead of `HOSTING_DELETE_FAILED`. A non-empty directory returns the new `HOSTING_DIR_NOT_EMPTY` with its `contents`, and the new `recursive: true` deletes a directory with everything in it (up to 2,000 items per call). The old single error, "missing, or a non-empty directory", is gone.
 
 ### v3.48
 
@@ -2807,7 +2830,7 @@ Response fields:
 
 **Applies to:** Secure Static Hosting only — a WordPress site returns `NOT_SUPPORTED_FOR_PRODUCT`.
 
-Delete a file (or empty directory) at `path` in the domain's hosting space.
+Delete a file or directory at `path` in the domain's hosting space. Idempotent: a path that is already gone returns `SUCCESS` with `alreadyAbsent: true`. A directory that still has files returns `HOSTING_DIR_NOT_EMPTY` with its `contents`, unless `recursive: true` is sent, which deletes it with everything inside (the site root can never be deleted).
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -2818,6 +2841,7 @@ Request body fields:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `path` | string | yes |  |
+| `recursive` | boolean | no | Delete a directory together with everything in it (up to 2,000 items per call; call again to continue). Without it, a non-empty directory returns HOSTING_DIR_NOT_EMPTY. |
 
 Response fields:
 
@@ -3322,6 +3346,103 @@ Response fields:
 | `contentBase64` | string |  |
 | `downloadUrl` | string | Downloads the PDF without signing in, for 15 minutes (null on a sandbox key). The link to hand a user. |
 | `downloadExpires` | string | When downloadUrl stops working (ISO 8601). |
+
+## POST /api/json/v3/account/topupCrypto
+
+**Top up credit with USDC (x402)**
+
+Opens a Coinbase checkout to add account credit with USDC on Base, the same as Use Crypto on porkbun.com. Nothing is charged by this call. Pay it either way:
+
+- `x402Url`: an AI agent with a wallet pays it directly over x402 (a gasless USDC transfer on Base, no page or person involved). This is how an agent gets past `INSUFFICIENT_FUNDS` on an account with no saved card.
+- `payUrl`: a Coinbase page where a person pays.
+
+Credit is added when the payment confirms (usually within a minute), less Coinbase's network fee (about $0.01). Check `GET /account/topupCryptoStatus/{checkoutId}`. Payments are on-chain and cannot be reversed. Same eligibility as on the website: verified email and phone, not a bank-transfer-only account, and an account older than 7 days (`CRYPTO_NOT_AVAILABLE` otherwise). Up to 10 checkouts per account per day. Not available on sandbox keys (`SANDBOX_UNSUPPORTED`; use `/sandbox/topup`).
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
+| `X-API-Key` | header | no | API key header auth (use with X-Secret-API-Key) |
+| `X-Secret-API-Key` | header | no | Secret API key header auth (use with X-API-Key) |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `amount` | integer | yes | Credit to add, in integer US cents (500 = $5.00). |
+| `dryRun` | boolean | no | Check eligibility only; creates no checkout. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `checkoutId` | string |  |
+| `amount_cents` | integer |  |
+| `currency` | string |  |
+| `network` | string |  |
+| `payUrl` | string | Coinbase-hosted page for a person to pay. |
+| `x402Url` | string | x402 payment URL an agent's wallet pays directly. |
+| `expiresAt` | string |  |
+| `message` | string |  |
+
+## GET /api/json/v3/account/topupCryptoStatus/{checkoutId}
+
+**Status of a USDC top-up**
+
+Whether a checkout from `POST /account/topupCrypto` has been paid and credited. `state`: ACTIVE (not paid), PROCESSING (paid, being credited), COMPLETED (credited), EXPIRED or FAILED. Returns the current balance too.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
+| `X-API-Key` | header | no | API key header auth (use with X-Secret-API-Key) |
+| `X-Secret-API-Key` | header | no | Secret API key header auth (use with X-API-Key) |
+| `checkoutId` | path | yes |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `checkoutId` | string |  |
+| `state` | string |  |
+| `credited` | boolean |  |
+| `balance_cents` | integer |  |
+| `balance` | string |  |
+
+## POST /api/json/v3/account/topupMpp
+
+**Top up credit with the user's card, paid by an agent (MPP)**
+
+Returns a signed, single-use payment link (valid 15 minutes, bound to this account and amount) that an AI agent pays with the user's **card** over MPP, the Machine Payments Protocol (mpp.dev), using a Stripe Shared Payment Token from its agent wallet (Stripe's Link Agent Wallet). No card needs to be saved at Porkbun. Nothing is charged by this call.
+
+The agent's MPP client requests `payUrl` (POST) and gets HTTP `402` with a `WWW-Authenticate: Payment` challenge (`method="stripe"`, `intent="charge"`); its wallet mints a token for the user's card, the client retries with `Authorization: Payment <credential>`, and the credit is added at once: the response carries `credited_cents` and the new `balance_cents`, with a `Payment-Receipt` header. For example: `npx @stripe/link-cli mpp pay <payUrl> -X POST --context "..."`. Link refuses a `--context` shorter than 100 characters: it is what the user reads when approving the spend, so say what it is for and the dollar amount, worded fresh for each payment (Link can refuse an identical repeat).
+
+Same limits as card top-ups (`POST /account/topup`): $5-$500, the monthly ceiling, 5 a day and 20 a month (`TOPUP_LIMIT_EXCEEDED`). Not available on sandbox keys (`SANDBOX_UNSUPPORTED`).
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
+| `X-API-Key` | header | no | API key header auth (use with X-Secret-API-Key) |
+| `X-Secret-API-Key` | header | no | Secret API key header auth (use with X-API-Key) |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `amount` | integer | yes | Credit to add, in integer US cents. |
+| `dryRun` | boolean | no | Check eligibility and limits only. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `amount_cents` | integer |  |
+| `payUrl` | string | Signed MPP payment URL; POST it with an MPP client. |
+| `expiresAt` | string |  |
+| `protocol` | string |  |
+| `methods` | string[] |  |
+| `message` | string |  |
 
 ## GET /api/json/v3/account/apiSettings
 
