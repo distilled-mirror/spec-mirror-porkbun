@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.52
+# Porkbun API v3 — v3.53
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -148,14 +148,19 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 |------|---------|
 | `INVALID_DOMAIN` | Domain parameter is invalid or not in your account |
 | `DOMAIN_NOT_AVAILABLE` | Domain is not available for registration |
-| `INSUFFICIENT_FUNDS` | Not enough **prepaid account credit**. A purchase never charges a card by itself, but `POST /account/topup` can charge a saved card and add credit in one call. The response carries `cost`, `balance` and `shortfall` in cents, plus `topUpAvailable` (whether a saved card can be charged now) and, when true, `topUpAmountToCover`; `next_action.type` is `top_up` or `add_funds` accordingly. Dry runs report the same fields |
+| `INSUFFICIENT_FUNDS` | Not enough **prepaid account credit**. A purchase never charges a card by itself, but `POST /account/topup` can charge a saved card and add credit in one call. The response carries `cost`, `balance` and `shortfall` in cents, plus `topUpAvailable` (whether a saved card can be charged now) and, when true, `topUpAmountToCover`, and `usdcAmountToCover` (the `POST /account/topupCrypto` amount that covers the shortfall after Coinbase's fee); `next_action.type` is `top_up` or `add_funds` accordingly. Dry runs report the same fields |
 | `DNSSEC_CREATE_FAILED` | The registry refused the DS record; the message carries its reason and code |
 | `DNSSEC_DELETE_FAILED` | The registry did not accept the DS removal |
 | `DNSSEC_INFO_UNAVAILABLE` | The registry did not answer for the domain's DNSSEC records; retry |
 | `COST_MISMATCH` | `cost` did not equal the current price in cents for the term being bought; the message names the expected value. Send `dryRun: true` with `cost: 0` to be quoted |
 | `ORDER_TOO_LARGE` | A single API registration cannot exceed $100. Register it on the website |
 | `NO_PAYMENT_METHOD` | `POST /account/topup` had no saved payment method to charge. A card can only be saved on the website |
-| `TOPUP_LIMIT_EXCEEDED` | The account hit the per-day (5) or per-month (20) ceiling on API top-ups. Nothing was charged |
+| `TOPUP_LIMIT_EXCEEDED` | The account hit the per-day (5) or per-month (20) ceiling on API top-ups, or the month's dollar ceiling on credit added over the API by any method (the monthly spend limit, or $100 when none is set). Nothing was charged |
+| `PHONE_CODE_INVALID` | The phone verification code is wrong or expired |
+| `PHONE_VERIFY_UNAVAILABLE` | This phone cannot be verified over the API (no number on the account, or a country that needs the website's CAPTCHA). Verify on the website |
+| `PHONE_VERIFY_LIMIT` | Five codes sent today, or ten wrong codes this hour |
+| `PHONE_VERIFY_FAILED` | The code could not be sent. Retry, or use `"channel": "call"` |
+| `MONTHLY_SPEND_LIMIT_EXCEEDED` | The purchase would take this month's API spending past the account's monthly limit (its own, or the $100 default; `limitSource` says which). Nothing was charged. Only the account holder can raise it, on the website |
 | `CARD_DECLINED` | The saved card was declined on a top-up. No credit was added |
 | `TOPUP_FAILED` | A top-up did not complete and nothing was charged. Retryable |
 | `REGISTRANT_CHANGE_NOT_SUPPORTED` | A registrant name/org change on a .au domain is a paid auDA ownership trade - do it at porkbun.com; admin/tech/billing edits work via the API |
@@ -352,6 +357,16 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.53
+
+- **One monthly limit on everything the API does with money.** The account's monthly spend limit now covers every API purchase (registrations, renewals, transfers, closeouts and paid hosting) and, counted separately against the same figure, all credit added over the API: card top-ups, auto top-ups set off by an API purchase, MPP and USDC. Closeouts and paid hosting were checked against the limit but never counted toward it; they now do.
+- **A $100/month default for accounts that have not set a limit.** It applies to purchases as well as top-ups now. Accounts that bought over the API before 2026-10-03 keep no default on purchases. `GET /account/apiSettings` returns `spendLimit` (`limit`, `source`: `account`, `default` or `none`, `spent`, `remaining`) and `topupLimit` (`limit`, `source`, `added`), the limits actually enforced.
+- **The check holds the amount for the length of the order,** so parallel orders cannot each pass against the same total and overshoot the limit together.
+- `MONTHLY_SPEND_LIMIT_EXCEEDED` now carries `monthlySpendLimit`, `limitSource`, `monthlySpendSoFar` and `cost`, and closeout dry runs return it too. `POST /account/topupCrypto` can return `TOPUP_LIMIT_EXCEEDED` (unpaid API checkouts from the last day count as if paid).
+- **Verify the phone from an agent.** `POST /account/verifyPhone/send` texts or calls a code to the number on the account and `POST /account/verifyPhone/confirm` checks it, so `VERIFICATION_REQUIRED` on a new account no longer means leaving the conversation. New codes `PHONE_CODE_INVALID`, `PHONE_VERIFY_UNAVAILABLE`, `PHONE_VERIFY_LIMIT`, `PHONE_VERIFY_FAILED`.
+- **New accounts can pay with USDC.** The 7-day account age no longer blocks `POST /account/topupCrypto`, so an account an agent just made can pay its first order in USDC.
+- **Small USDC top-ups.** `POST /account/topupCrypto` now takes $1 and up (was $5), and returns `estimatedFee_cents` and `estimatedCredit_cents`: Coinbase keeps about 1%, not the $0.01 these docs said. `INSUFFICIENT_FUNDS` and dry runs carry `usdcAmountToCover`, the checkout amount that still covers the shortfall after the fee, so an agent can buy a $2.50 domain with a $2.53 checkout.
 
 ### v3.52
 
@@ -970,7 +985,7 @@ Request body fields:
 | `cost` | integer | yes | The registration cost in pennies (USD cents). Must exactly equal the total price for the domain at its minimum registration duration. Obtain this from /domain/checkDomain first. |
 | `agreeToTerms` | string | yes | Must be 'yes' or '1' to confirm agreement to the Domain Name Registration Agreement, Product Terms of Service, Privacy Policy, and automatic renewal terms. |
 | `whoisPrivacy` | boolean | no | Optional. Override WHOIS privacy for this registration. When omitted, the account-level default is used (set under Account Security Settings on porkbun.com/account — defaults to enabled). Pass `true` to force-enable privacy or `false` to register with public contact info. Strings `"on"`/`"off"`, `"true"`/`"false"`, `"yes"`/`"no"`, `"1"`/`"0"` are also accepted. Has no effect on TLDs that don't support WHOIS privacy (privacy stays off regardless). |
-| `dryRun` | boolean | no | Optional. When true, runs all pre-flight validation (availability, pricing, cost match, eligibility, funds, spend limit) and returns a preview with `dryRun: true` and `wouldSucceed` WITHOUT creating an order or charging. Nothing is registered and the rate-limit budget is not consumed. Use it to safely confirm an operation before committing. |
+| `dryRun` | boolean | no | Optional. When true, runs all pre-flight validation (availability, pricing, cost match, eligibility, funds, monthly spend limit, including the $100 default when none is set) and returns a preview with `dryRun: true` and `wouldSucceed` WITHOUT creating an order or charging. Nothing is registered and the rate-limit budget is not consumed. Use it to safely confirm an operation before committing. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/domain/create/{domain} \
@@ -3137,7 +3152,7 @@ Response fields (AutoTopupResponse):
 
 **`amount` is optional.** Omitted, it charges the account's configured top-up amount, or $50 if the account has never set one — `amountSource` in the response says which of `configured`, `default` or `request` applied. Supplied, it charges that figure for this call only and leaves the stored setting alone, which is the point: an agent could always have written the amount to `/account/autoTopup` first, and making it do that turns a one-off charge into a silent edit of a setting the customer owns.
 
-The card itself can only be saved outside the API, and a supplied amount is held to the same 500–50000 cent range as one set through `/account/autoTopup`. On top of that the dollars are bounded by the month: the account's **monthly spend limit** caps top-ups as well as domain spend (it is the account saying how much the API may move, and a card charge is the API moving money), and an account that has never set one still gets a $100/month ceiling — `monthlyCeiling` and `ceilingSource` on `GET /account/autoTopup` say which is in force. Top-ups are also limited to 5 per day and 20 per month (`TOPUP_LIMIT_EXCEEDED`), and every successful charge emails the account holder.
+The card itself can only be saved outside the API, and a supplied amount is held to the same 500–50000 cent range as one set through `/account/autoTopup`. On top of that the dollars are bounded by the month: the account's **monthly spend limit** caps top-ups as well as domain spend (it is the account saying how much the API may move, and a card charge is the API moving money), and an account that has never set one still gets a $100/month ceiling. Card, auto top-ups set off by an API purchase, MPP and USDC all count toward it — `monthlyCeiling` and `ceilingSource` on `GET /account/autoTopup` say which is in force. Top-ups are also limited to 5 per day and 20 per month (`TOPUP_LIMIT_EXCEEDED`), and every successful charge emails the account holder.
 
 Errors that matter: `NO_PAYMENT_METHOD` (nothing saved to charge — the account holder has to save a card or buy credit on the website), `CARD_DECLINED` (nothing was added; the card needs attention), `TOPUP_FAILED` (nothing was charged; retry once).
 
@@ -3356,7 +3371,7 @@ Opens a Coinbase checkout to add account credit with USDC on Base, the same as U
 - `x402Url`: an AI agent with a wallet pays it directly over x402 (a gasless USDC transfer on Base, no page or person involved). This is how an agent gets past `INSUFFICIENT_FUNDS` on an account with no saved card.
 - `payUrl`: a Coinbase page where a person pays.
 
-Credit is added when the payment confirms (usually within a minute), less Coinbase's network fee (about $0.01). Check `GET /account/topupCryptoStatus/{checkoutId}`. Payments are on-chain and cannot be reversed. Same eligibility as on the website: verified email and phone, not a bank-transfer-only account, and an account older than 7 days (`CRYPTO_NOT_AVAILABLE` otherwise). Up to 10 checkouts per account per day. Not available on sandbox keys (`SANDBOX_UNSUPPORTED`; use `/sandbox/topup`).
+Credit is added when the payment confirms (usually within a minute), less Coinbase's fee of about 1% (`estimatedFee_cents`, `estimatedCredit_cents`). To cover an `INSUFFICIENT_FUNDS` shortfall exactly, open the checkout for its `usdcAmountToCover`. Check `GET /account/topupCryptoStatus/{checkoutId}`. Payments are on-chain and cannot be reversed. Needs a verified email and phone and an account that is not bank-transfer-only (`CRYPTO_NOT_AVAILABLE` otherwise). Up to 10 checkouts per account per day. USDC counts toward the same monthly ceiling as card and MPP top-ups (the monthly spend limit, or $100 when none is set), checked when the checkout is opened, with unpaid checkouts from the last day counted as if paid (`TOPUP_LIMIT_EXCEEDED`). Not available on sandbox keys (`SANDBOX_UNSUPPORTED`; use `/sandbox/topup`).
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -3368,7 +3383,7 @@ Request body fields:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `amount` | integer | yes | Credit to add, in integer US cents (500 = $5.00). |
+| `amount` | integer | yes | Checkout amount in integer US cents, $1.00 to $500.00 (100 = $1.00). Credit is this less Coinbase's fee of about 1%. |
 | `dryRun` | boolean | no | Check eligibility only; creates no checkout. |
 
 Response fields:
@@ -3378,6 +3393,8 @@ Response fields:
 | `status` | string |  |
 | `checkoutId` | string |  |
 | `amount_cents` | integer |  |
+| `estimatedFee_cents` | integer | Coinbase's fee, about 1%, estimated high. |
+| `estimatedCredit_cents` | integer | Credit the account gets once it is paid. |
 | `currency` | string |  |
 | `network` | string |  |
 | `payUrl` | string | Coinbase-hosted page for a person to pay. |
@@ -3408,6 +3425,69 @@ Response fields:
 | `credited` | boolean |  |
 | `balance_cents` | integer |  |
 | `balance` | string |  |
+
+## POST /api/json/v3/account/verifyPhone/send
+
+**Text a verification code to the account's phone**
+
+Purchases and top-ups need a verified email address and phone number, and accounts are not asked to verify the phone at signup, so `VERIFICATION_REQUIRED` is often the first error a new account sees. This texts (or calls) a code to the phone number already on the account; ask the person for it and pass it to `POST /account/verifyPhone/confirm`. The number cannot be chosen or changed over the API.
+
+One live code at a time: a second request within 10 minutes returns `codeAlreadySent` instead of texting again (send `"channel": "call"` if the text never arrived). Up to 5 sends a day (`PHONE_VERIFY_LIMIT`). Numbers in countries where the website requires a CAPTCHA for phone verification, or accounts with no phone number, get `PHONE_VERIFY_UNAVAILABLE` and verify on the website. Already verified: `alreadyVerified: true`. Not available on sandbox keys.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
+| `X-API-Key` | header | no | API key header auth (use with X-Secret-API-Key) |
+| `X-Secret-API-Key` | header | no | Secret API key header auth (use with X-API-Key) |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `channel` | string | no | `call` reads the code out by voice, for when a text does not arrive. |
+| `dryRun` | boolean | no |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `sent` | boolean |  |
+| `codeAlreadySent` | boolean |  |
+| `alreadyVerified` | boolean |  |
+| `channel` | string |  |
+| `sentTo` | string | The number, masked (`+1 ••• 42`). |
+| `expiresInMinutes` | integer |  |
+| `retryAfterSeconds` | integer |  |
+| `message` | string |  |
+
+## POST /api/json/v3/account/verifyPhone/confirm
+
+**Confirm the phone verification code**
+
+Marks the account's phone number verified with the code from `POST /account/verifyPhone/send`. A wrong or expired code returns `PHONE_CODE_INVALID`; 10 wrong codes in an hour lock it for the hour (`PHONE_VERIFY_LIMIT`). The response says whether the email address is verified too, since purchases need both; the email is verified by the link in the verification email.
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
+| `X-API-Key` | header | no | API key header auth (use with X-Secret-API-Key) |
+| `X-Secret-API-Key` | header | no | Secret API key header auth (use with X-API-Key) |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `code` | string | yes | The code the person received, exactly as texted. Case does not matter. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `verified` | boolean |  |
+| `alreadyVerified` | boolean |  |
+| `emailVerified` | boolean |  |
+| `message` | string |  |
 
 ## POST /api/json/v3/account/topupMpp
 
@@ -3448,7 +3528,7 @@ Response fields:
 
 **Get API spend settings**
 
-Returns the account's API spend control settings and current month's spend total. All amounts are in cents. Authenticate using `X-API-Key` and `X-Secret-API-Key` headers, or `Authorization: Bearer <token>`.
+Returns the account's API spend control settings, this month's spend, and the limits actually enforced: `spendLimit` on purchases and `topupLimit` on credit added over the API. The account holder sets the limit on the website (https://porkbun.com/account/api); it cannot be changed over the API. All amounts are in cents. Authenticate using `X-API-Key` and `X-Secret-API-Key` headers, or `Authorization: Bearer <token>`.
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -3469,6 +3549,8 @@ Response fields (ApiSettingsResponse):
 | `status` | string |  |
 | `settings` | object |  |
 | `monthlySpend` | integer | Total API spend in the current calendar month, in cents. |
+| `spendLimit` | object | The monthly cap on API purchases actually enforced (registrations, renewals, transfers, closeouts, paid hosting). |
+| `topupLimit` | object | The monthly cap on credit added over the API: card top-ups, auto top-ups set off by an API purchase, MPP and USDC together. |
 
 ## GET /api/json/v3/webhook/eventTypes
 
