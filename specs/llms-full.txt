@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.53
+# Porkbun API v3 — v3.54
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -156,6 +156,14 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 | `ORDER_TOO_LARGE` | A single API registration cannot exceed $100. Register it on the website |
 | `NO_PAYMENT_METHOD` | `POST /account/topup` had no saved payment method to charge. A card can only be saved on the website |
 | `TOPUP_LIMIT_EXCEEDED` | The account hit the per-day (5) or per-month (20) ceiling on API top-ups, or the month's dollar ceiling on credit added over the API by any method (the monthly spend limit, or $100 when none is set). Nothing was charged |
+| `PAYMENT_REQUIRED` | HTTP 402: `payWith: "usdc"` was sent and this purchase is waiting for payment. Pay the `PAYMENT-REQUIRED` header's x402 terms and repeat the request with `PAYMENT-SIGNATURE`. Nothing was charged |
+| `PAYMENT_FAILED` | HTTP 402: Coinbase refused the payment (for example, insufficient USDC). Fresh terms are in `PAYMENT-REQUIRED`. Nothing was charged |
+| `PAYMENT_IN_PROGRESS` | HTTP 409: another request is processing this payment. Do not pay again |
+| `PAYMENT_PENDING` | HTTP 409: the checkout named by `usdcCheckoutId` was paid and is settling. Repeat after `retryAfter` seconds; do not pay again |
+| `PAYMENT_MISMATCH` | HTTP 409: the checkout was opened for a different purchase or price. Repeat the request that returned it, unchanged |
+| `PAYMENT_NOT_FOUND` | HTTP 404: `usdcCheckoutId` is not a checkout this account opened |
+| `PAYMENT_ALREADY_USED` | HTTP 409: the checkout was already used: it paid for a purchase, or went to account credit after an hour unclaimed. Do not pay again; buy from credit if the purchase is not done |
+| `PAYMENT_EXPIRED` | HTTP 409: the checkout can no longer be paid (expired or failed). Send the purchase without `usdcCheckoutId` for a new one |
 | `PHONE_CODE_INVALID` | The phone verification code is wrong or expired |
 | `PHONE_VERIFY_UNAVAILABLE` | This phone cannot be verified over the API (no number on the account, or a country that needs the website's CAPTCHA). Verify on the website |
 | `PHONE_VERIFY_LIMIT` | Five codes sent today, or ten wrong codes this hour |
@@ -290,7 +298,7 @@ curl -X POST https://api.porkbun.com/api/json/v3/domain/create/example.com \
 
 ## Rate limiting
 
-Some endpoints are rate limited. When exceeded, the API returns HTTP 429 with a `RATE_LIMIT_EXCEEDED` body and a `Retry-After` header telling you how many seconds to wait before retrying (the same value as the `ttlRemaining` body field). Fixed-limit endpoints (`/apikey/request`, `/apikey/retrieve`) also return `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` headers on every call. Hosting has per-account velocity guards too — 10 provisions/hour (`/hosting/create`) and 20 WordPress credential mints/hour (`/hosting/createWpCredentials`), both with the same headers; `dryRun` calls don't consume budget.
+Some endpoints are rate limited. When exceeded, the API returns HTTP 429 with a `RATE_LIMIT_EXCEEDED` body and a `Retry-After` header telling you how many seconds to wait before retrying (the same value as the `ttlRemaining` body field). Fixed-limit endpoints (`/apikey/request`, `/apikey/retrieve`) also return `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` headers on every call. Availability checks also slow down accounts that check at a sustained scanning rate: about 1,800 names over three hours while registering fewer than one domain per 200 names checked, an account's checks share 50 names per 5 minutes for the next 24 hours (`RATE_LIMIT_EXCEEDED` with `reason: "SUSTAINED_BULK_CHECKING"`). Hosting has per-account velocity guards too — 10 provisions/hour (`/hosting/create`) and 20 WordPress credential mints/hour (`/hosting/createWpCredentials`), both with the same headers; `dryRun` calls don't consume budget.
 
 ## Webhooks
 
@@ -358,8 +366,14 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 
 ## Changelog
 
+### v3.54
+
+- **Pay for a purchase directly in USDC (x402).** Send `"payWith": "usdc"` on `/domain/create`, `/domain/renew`, `/domain/transfer`, `/closeout/buy` or a paid `/hosting/create`. After every normal check passes, the first call answers HTTP 402 (`PAYMENT_REQUIRED`) with Coinbase's x402 terms in the `PAYMENT-REQUIRED` header and charges nothing; an x402 client pays and repeats the same request with `PAYMENT-SIGNATURE`, and the purchase completes in that call, with the receipt in `PAYMENT-RESPONSE` and `payment` in the body. No account credit is needed. If the purchase fails after payment, the payment is kept as account credit, not returned to the wallet (`payment.keptAsCredit: true`, with `balance_cents`). The monthly spend limit is checked before any charge. A 402 releases its `Idempotency-Key`, so the paid repeat with the same key runs. New codes `PAYMENT_REQUIRED`, `PAYMENT_FAILED`, `PAYMENT_IN_PROGRESS`; new `next_action.type` `pay`.
+- **Pay-then-confirm, for wallets that pay a URL themselves** (a wallet MCP, Coinbase's `awal` CLI, or a person on the Coinbase page): pay the 402's `x402Url` or `payUrl`, then repeat the purchase with `"usdcCheckoutId"`. The API checks the checkout is this account's, for this exact purchase and price, paid and unused, then completes the purchase. New codes `PAYMENT_PENDING`, `PAYMENT_MISMATCH`, `PAYMENT_NOT_FOUND`, `PAYMENT_ALREADY_USED`, `PAYMENT_EXPIRED`. A paid purchase checkout nobody claims within an hour is added to the account's credit.
+
 ### v3.53
 
+- **Sustained bulk checking is throttled.** An account checking about 1,800 names over three hours while registering fewer than one domain per 200 names checked gets 50 names per 5 minutes for the next 24 hours, on `/domain/checkDomain` (single and bulk) and the older v2 and reseller check endpoints alike (`RATE_LIMIT_EXCEEDED`, `reason: "SUSTAINED_BULK_CHECKING"`, `retryAfter`). Ordinary checking is untouched; accounts with 100+ registrations a year, active affiliates and per-key limits set by support are exempt.
 - **One monthly limit on everything the API does with money.** The account's monthly spend limit now covers every API purchase (registrations, renewals, transfers, closeouts and paid hosting) and, counted separately against the same figure, all credit added over the API: card top-ups, auto top-ups set off by an API purchase, MPP and USDC. Closeouts and paid hosting were checked against the limit but never counted toward it; they now do.
 - **A $100/month default for accounts that have not set a limit.** It applies to purchases as well as top-ups now. Accounts that bought over the API before 2026-10-03 keep no default on purchases. `GET /account/apiSettings` returns `spendLimit` (`limit`, `source`: `account`, `default` or `none`, `spent`, `remaining`) and `topupLimit` (`limit`, `source`, `added`), the limits actually enforced.
 - **The check holds the amount for the length of the order,** so parallel orders cannot each pass against the same total and overshoot the limit together.
@@ -861,6 +875,8 @@ Check availability and pricing for up to 25 domains in one call. Same endpoint a
 
 **Prefer this over looping the single check.** Checks are chunked per registry, so a batch is materially less work for us than the same names one at a time, and the budget reflects that: this draws on a separate allowance of **200 domains per 60 seconds** per account, against 10 checks per 10 seconds for the single form. Counting is per DOMAIN, not per request, so 25 domains spends 25 of the 200.
 
+**Sustained bulk checking.** An account that checks about 1,800 names over three hours while registering little of what it checks (fewer than one domain per 200 names over a day) is treated as scanning for the next 24 hours: its checks, single and bulk, on every API version, share a budget of 50 names per 5 minutes. Over it, the call is refused whole with `RATE_LIMIT_EXCEEDED`, `reason: "SUSTAINED_BULK_CHECKING"` and `retryAfter`; nothing is part-answered. Normal use, including checking a long list of candidate names once, is nowhere near this. Accounts that buy (100 or more registrations in a year) and affiliates sending orders are never treated as scanning, and a per-key limit from support overrides it.
+
 **Partial results are normal and must be read.** Three lists come back and they mean different things:
 - `domains` - answered, keyed by domain name, each value identical in shape to the single-check `response`.
 - `invalid` - entries that are not checkable at all (not a domain, unsupported TLD). One typo does not fail the call; the other names are still answered.
@@ -901,6 +917,8 @@ Check if a domain is available for registration and retrieve current pricing. In
 
 **Rate limit:** Configurable per API key. Default is 10 checks per 10 seconds per account (raised from 1 per 10 seconds in 3.29). The window is intentionally 10 seconds rather than 1, so a batch of candidate names can be checked back-to-back. `/domain/checkSingleDomain` draws on the same budget. Rate limit usage is returned in the `limits` field of the response.
 
+**Sustained bulk checking.** An account that checks about 1,800 names over three hours while registering little of what it checks (fewer than one domain per 200 names over a day) is treated as scanning for the next 24 hours: its checks, single and bulk, on every API version, share a budget of 50 names per 5 minutes. Over it, the call is refused whole with `RATE_LIMIT_EXCEEDED`, `reason: "SUSTAINED_BULK_CHECKING"` and `retryAfter`; nothing is part-answered. Normal use, including checking a long list of candidate names once, is nowhere near this. Accounts that buy (100 or more registrations in a year) and affiliates sending orders are never treated as scanning, and a per-key limit from support overrides it.
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
@@ -924,21 +942,28 @@ Response fields (CheckDomainResponse):
 
 **Register a domain**
 
-Register a domain using account credit. Requirements:
+Register a domain, paid from account credit or directly in USDC. Requirements:
 - Account email and phone must be verified
-- The account must hold enough **prepaid credit** to cover the price (see "Paying for it" below)
+- Enough **prepaid credit** to cover the price, or `"payWith": "usdc"` to pay directly (see "Paying for it" below)
 - `agreeToTerms` must be `'yes'` or `'1'`
 - `cost` must equal the current price for the domain's minimum registration duration (in pennies)
 - Premium domains cannot be registered via API, and a single order cannot exceed $100 (`ORDER_TOO_LARGE`)
 
 ## Paying for it
 
-**API purchases are paid from prepaid account credit. No card on file is charged at purchase time** - the thing most first-time callers get wrong, because having a card saved is not enough; the balance has to be there before the call. Three ways to deal with it:
-- Read the balance with `GET /account/balance` (cents, plus a display string) and top up at https://porkbun.com/account/credit.
-- Turn on **auto top-up** at https://porkbun.com/account/api so a saved payment method refills the balance when it drops below a threshold you set. This is the hands-off option for an agent that registers on its own.
+Two ways: from prepaid account credit (the default), or directly in USDC.
+
+**From account credit.** No card on file is charged at purchase time - the thing most first-time callers get wrong, because having a card saved is not enough; the balance has to be there before the call.
+- Read the balance with `GET /account/balance` (cents, plus a display string).
+- Add to it: `POST /account/topup` charges a saved card now (with the account holder's OK); `POST /account/topupMpp` returns a link an agent pays with the user's card from a Stripe Link agent wallet; `POST /account/topupCrypto` opens a USDC checkout an agent's wallet can pay over x402; or the account holder adds credit at https://porkbun.com/account/credit.
+- Turn on **auto top-up** at https://porkbun.com/account/api so a saved card refills the balance when it drops below a threshold. The hands-off option for an agent that registers on its own.
 - Rehearse with `dryRun: true`, which reports `cost`, `balance`, `sufficientFunds` and, when short, `shortfall`.
 
-A purchase attempted without enough credit returns `INSUFFICIENT_FUNDS` carrying `cost`, `balance` and `shortfall` in cents, and a message naming all three.
+A purchase attempted without enough credit returns `INSUFFICIENT_FUNDS` carrying `cost`, `balance`, `shortfall`, `topUpAvailable` and `usdcAmountToCover` in cents, and a message naming them.
+
+**Directly in USDC (x402).** Add `"payWith": "usdc"`. After every check passes, the call answers HTTP 402 `PAYMENT_REQUIRED` with Coinbase's x402 terms in the `PAYMENT-REQUIRED` header and charges nothing. An x402 client pays them and repeats the same request with a `PAYMENT-SIGNATURE` header, and the registration completes in that call, with the receipt in `PAYMENT-RESPONSE`. No credit is needed. If the registration fails after payment, the payment is not sent back to the wallet: it stays on the account as credit (`payment.keptAsCredit` and `balance_cents` in the error), ready to retry from credit. Guide: https://porkbun.com/llms/guides/pay-with-usdc-x402
+
+**Monthly limit.** Either way, purchases count toward the account's monthly API spend limit, $100 a month until the account holder sets their own at https://porkbun.com/account/api (`MONTHLY_SPEND_LIMIT_EXCEEDED`). Guide: https://porkbun.com/llms/guides/spend-limits
 
 Registrations are always for the registry-minimum duration (usually 1 year).
 
@@ -985,6 +1010,8 @@ Request body fields:
 | `cost` | integer | yes | The registration cost in pennies (USD cents). Must exactly equal the total price for the domain at its minimum registration duration. Obtain this from /domain/checkDomain first. |
 | `agreeToTerms` | string | yes | Must be 'yes' or '1' to confirm agreement to the Domain Name Registration Agreement, Product Terms of Service, Privacy Policy, and automatic renewal terms. |
 | `whoisPrivacy` | boolean | no | Optional. Override WHOIS privacy for this registration. When omitted, the account-level default is used (set under Account Security Settings on porkbun.com/account — defaults to enabled). Pass `true` to force-enable privacy or `false` to register with public contact info. Strings `"on"`/`"off"`, `"true"`/`"false"`, `"yes"`/`"no"`, `"1"`/`"0"` are also accepted. Has no effect on TLDs that don't support WHOIS privacy (privacy stays off regardless). |
+| `payWith` | string | no | Optional. `"usdc"` pays for this purchase directly in USDC on Base over x402 instead of from account credit. The first call answers HTTP 402 (`PAYMENT_REQUIRED`) with Coinbase's terms in the `PAYMENT-REQUIRED` header and charges nothing; an x402 client pays and repeats the same request with a `PAYMENT-SIGNATURE` header, and the purchase completes in that call. If it then fails, the payment stays on the account as account credit; it is not sent back to the wallet. If your wallet pays URLs itself instead, pay the 402's `x402Url` (or have a person pay `payUrl`) and repeat the request with `usdcCheckoutId`. See the guide: https://porkbun.com/llms/guides/pay-with-usdc-x402 |
+| `usdcCheckoutId` | string | no | With `payWith: "usdc"`: the `checkoutId` from an earlier `PAYMENT_REQUIRED`, once its `x402Url` or `payUrl` has been paid. Send it with otherwise the same request; the purchase completes if the checkout is paid and was opened for this purchase. |
 | `dryRun` | boolean | no | Optional. When true, runs all pre-flight validation (availability, pricing, cost match, eligibility, funds, monthly spend limit, including the $100 default when none is set) and returns a preview with `dryRun: true` and `wouldSucceed` WITHOUT creating an order or charging. Nothing is registered and the rate-limit budget is not consumed. Use it to safely confirm an operation before committing. |
 
 ```bash
@@ -1033,11 +1060,11 @@ Response fields (DryRunPreviewResponse):
 
 **Renew a domain**
 
-Renew a domain using account credit. Requirements:
+Renew a domain, paid from account credit or directly in USDC. Requirements:
 - Domain must be in your account and active
 - Domain must be opted in to API access
 - Account email and phone must be verified
-- Account must have sufficient credit
+- Sufficient account credit, or `"payWith": "usdc"` to pay directly
 - `cost` must equal the current renewal price for the domain's minimum renewal duration (in pennies)
 - Domain must have been registered more than 30 days ago (checked against the domain's creation date)
 - Domain must not have been successfully renewed within the last 30 days
@@ -1075,7 +1102,7 @@ Add `dryRun: true` to validate everything and preview the cost WITHOUT renewing 
 }
 ```
 
-**Paying for it.** Paid from **prepaid account credit** — no card on file is charged at purchase time. Read the balance with `GET /account/balance`, top up at https://porkbun.com/account/credit, or turn on auto top-up at https://porkbun.com/account/api. Too little credit returns `INSUFFICIENT_FUNDS` with `cost`, `balance` and `shortfall` in cents. `dryRun: true` reports all three without charging, and `dryRun` with `cost: 0` returns a quote.
+**Paying for it.** Two ways. **From prepaid account credit** (the default): no card on file is charged at purchase time, so the balance has to be there first. Read it with `GET /account/balance`; add to it with `POST /account/topup` (a saved card, with the account holder's OK), `POST /account/topupMpp` (the user's card from a Stripe Link agent wallet), `POST /account/topupCrypto` (USDC) or at https://porkbun.com/account/credit, and auto top-up at https://porkbun.com/account/api keeps it filled. Too little credit returns `INSUFFICIENT_FUNDS` with `cost`, `balance`, `shortfall` and `usdcAmountToCover` in cents. **Or directly in USDC:** add `"payWith": "usdc"` and an x402 client pays the HTTP 402 this returns (`PAYMENT_REQUIRED`, terms in the `PAYMENT-REQUIRED` header) and repeats the request with `PAYMENT-SIGNATURE`; no credit is needed, and if the purchase fails the payment stays on the account as credit (https://porkbun.com/llms/guides/pay-with-usdc-x402). Either way the account's monthly API spend limit applies ($100 a month until the account holder sets their own; `MONTHLY_SPEND_LIMIT_EXCEEDED`). `dryRun: true` reports cost and balance without charging, and `dryRun` with `cost: 0` returns a quote.
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -1086,6 +1113,8 @@ Request body fields:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `cost` | integer | yes | The renewal cost in pennies (USD cents). Must exactly equal the total price for the domain at its minimum renewal duration. Obtain this from /domain/checkDomain first. |
+| `payWith` | string | no | Optional. `"usdc"` pays for this purchase directly in USDC on Base over x402 instead of from account credit. The first call answers HTTP 402 (`PAYMENT_REQUIRED`) with Coinbase's terms in the `PAYMENT-REQUIRED` header and charges nothing; an x402 client pays and repeats the same request with a `PAYMENT-SIGNATURE` header, and the purchase completes in that call. If it then fails, the payment stays on the account as account credit; it is not sent back to the wallet. If your wallet pays URLs itself instead, pay the 402's `x402Url` (or have a person pay `payUrl`) and repeat the request with `usdcCheckoutId`. See the guide: https://porkbun.com/llms/guides/pay-with-usdc-x402 |
+| `usdcCheckoutId` | string | no | With `payWith: "usdc"`: the `checkoutId` from an earlier `PAYMENT_REQUIRED`, once its `x402Url` or `payUrl` has been paid. Send it with otherwise the same request; the purchase completes if the checkout is paid and was opened for this purchase. |
 | `dryRun` | boolean | no | Optional. When true, runs all pre-flight validation and returns a preview with `dryRun: true` and `wouldSucceed` WITHOUT renewing or charging. Nothing changes and the rate-limit budget is not consumed. |
 
 ```bash
@@ -1135,11 +1164,11 @@ Response fields (DryRunPreviewResponse):
 
 **Initiate a domain transfer**
 
-Initiates an inbound domain transfer to Porkbun using account credit. The transfer is processed asynchronously and typically takes 5–7 days to complete.
+Initiates an inbound domain transfer to Porkbun, paid from account credit or directly in USDC. The transfer is processed asynchronously and typically takes 5–7 days to complete.
 
 **Requirements:**
 - Account email and phone must be verified.
-- Sufficient account credit to cover the transfer cost.
+- Sufficient account credit to cover the transfer cost, or `"payWith": "usdc"` to pay directly.
 - Domain must not already be in your account.
 - No other active transfer for the same domain.
 - `.uk` and manage-only TLDs are not supported via API.
@@ -1170,7 +1199,7 @@ Add `dryRun: true` to validate everything and preview the cost WITHOUT initiatin
 }
 ```
 
-**Paying for it.** Paid from **prepaid account credit** — no card on file is charged at purchase time. Read the balance with `GET /account/balance`, top up at https://porkbun.com/account/credit, or turn on auto top-up at https://porkbun.com/account/api. Too little credit returns `INSUFFICIENT_FUNDS` with `cost`, `balance` and `shortfall` in cents. `dryRun: true` reports all three without charging, and `dryRun` with `cost: 0` returns a quote.
+**Paying for it.** Two ways. **From prepaid account credit** (the default): no card on file is charged at purchase time, so the balance has to be there first. Read it with `GET /account/balance`; add to it with `POST /account/topup` (a saved card, with the account holder's OK), `POST /account/topupMpp` (the user's card from a Stripe Link agent wallet), `POST /account/topupCrypto` (USDC) or at https://porkbun.com/account/credit, and auto top-up at https://porkbun.com/account/api keeps it filled. Too little credit returns `INSUFFICIENT_FUNDS` with `cost`, `balance`, `shortfall` and `usdcAmountToCover` in cents. **Or directly in USDC:** add `"payWith": "usdc"` and an x402 client pays the HTTP 402 this returns (`PAYMENT_REQUIRED`, terms in the `PAYMENT-REQUIRED` header) and repeats the request with `PAYMENT-SIGNATURE`; no credit is needed, and if the purchase fails the payment stays on the account as credit (https://porkbun.com/llms/guides/pay-with-usdc-x402). Either way the account's monthly API spend limit applies ($100 a month until the account holder sets their own; `MONTHLY_SPEND_LIMIT_EXCEEDED`). `dryRun: true` reports cost and balance without charging, and `dryRun` with `cost: 0` returns a quote.
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -1183,6 +1212,8 @@ Request body fields:
 | `authCode` | string | yes | The EPP auth code for the domain. |
 | `cost` | integer | yes | The transfer cost in cents as returned by the pricing API. Must match exactly. |
 | `holdForDnsSetup` | boolean | no | Charge the transfer but hold it at `PENDINGDNS` instead of releasing it to the registry, so the DNS zone can be built before the domain moves. This is the no-downtime path: hold, then `POST /domain/prepareTransfer/{domain}`, then load records with `/dns/import/{domain}`, then `POST /domain/startTransfer/{domain}`. Nothing releases a held transfer on a timer. Not available for .uk or Handshake TLDs, which return `TRANSFER_HOLD_NOT_AVAILABLE` and are not charged. |
+| `payWith` | string | no | Optional. `"usdc"` pays for this purchase directly in USDC on Base over x402 instead of from account credit. The first call answers HTTP 402 (`PAYMENT_REQUIRED`) with Coinbase's terms in the `PAYMENT-REQUIRED` header and charges nothing; an x402 client pays and repeats the same request with a `PAYMENT-SIGNATURE` header, and the purchase completes in that call. If it then fails, the payment stays on the account as account credit; it is not sent back to the wallet. If your wallet pays URLs itself instead, pay the 402's `x402Url` (or have a person pay `payUrl`) and repeat the request with `usdcCheckoutId`. See the guide: https://porkbun.com/llms/guides/pay-with-usdc-x402 |
+| `usdcCheckoutId` | string | no | With `payWith: "usdc"`: the `checkoutId` from an earlier `PAYMENT_REQUIRED`, once its `x402Url` or `payUrl` has been paid. Send it with otherwise the same request; the purchase completes if the checkout is paid and was opened for this purchase. |
 | `dryRun` | boolean | no | Optional. When true, runs all pre-flight validation and returns a preview with `dryRun: true` and `wouldSucceed` WITHOUT initiating the transfer or charging. Nothing changes and the rate-limit budget is not consumed. |
 
 ```bash
@@ -2339,7 +2370,7 @@ Response fields:
 
 **Buy a closeout outright**
 
-**Spends account credit.** Buys a closeout at its current price and claims the name with the provider in one call. Send `cost` as the exact `totalPrice` from `/closeout/get/{domain}`; any other value is refused with `COST_MISMATCH` so a caller can never be charged a price it did not name. `dryRun: true` with `cost: 0` returns a quote and charges nothing. Honours `Idempotency-Key`.
+**Spends account credit, or pays directly in USDC with `"payWith": "usdc"` (HTTP 402, then repeat with `PAYMENT-SIGNATURE`; kept as account credit if the claim fails).** Counts toward the monthly API spend limit. Buys a closeout at its current price and claims the name with the provider in one call. Send `cost` as the exact `totalPrice` from `/closeout/get/{domain}`; any other value is refused with `COST_MISMATCH` so a caller can never be charged a price it did not name. `dryRun: true` with `cost: 0` returns a quote and charges nothing. Honours `Idempotency-Key`.
 
 **The domain does not arrive immediately.** Claiming reserves it; the provider then has to release it, which usually takes a few days. Poll `/domain/listAll` or subscribe to the `domain.registered` webhook rather than expecting it in your account when this returns.
 
@@ -2358,6 +2389,8 @@ Request body fields:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `cost` | integer | yes | Exact totalPrice in integer US cents, from /closeout/get/{domain}. Use 0 only with dryRun to request a quote. |
+| `payWith` | string | no | Optional. `"usdc"` pays for this purchase directly in USDC on Base over x402 instead of from account credit. The first call answers HTTP 402 (`PAYMENT_REQUIRED`) with Coinbase's terms in the `PAYMENT-REQUIRED` header and charges nothing; an x402 client pays and repeats the same request with a `PAYMENT-SIGNATURE` header, and the purchase completes in that call. If it then fails, the payment stays on the account as account credit; it is not sent back to the wallet. If your wallet pays URLs itself instead, pay the 402's `x402Url` (or have a person pay `payUrl`) and repeat the request with `usdcCheckoutId`. See the guide: https://porkbun.com/llms/guides/pay-with-usdc-x402 |
+| `usdcCheckoutId` | string | no | With `payWith: "usdc"`: the `checkoutId` from an earlier `PAYMENT_REQUIRED`, once its `x402Url` or `payUrl` has been paid. Send it with otherwise the same request; the purchase completes if the checkout is paid and was opened for this purchase. |
 | `dryRun` | boolean | no | Validate and price without charging or claiming. |
 
 Response fields:
@@ -2726,7 +2759,7 @@ Response fields:
 
 **Applies to:** Both products — the `sku` decides which.
 
-Provision hosting (Secure Static Hosting or Cloud for WordPress) for a domain in the account. The FIRST provision for a domain starts a **15-day free trial** ($0 now) that **auto-renews** at the plan price when the trial ends; a re-provision after deprovision is charged immediately to account credit (one free trial per domain). Provisioning **switches the domain to Porkbun nameservers** if it isn't already — pass `agreeToNameserverChange: true` to allow that. Supports `dryRun`. Remote setup can be async: `status` may be `PENDING` — poll `/hosting/get` until `ACTIVE` before deploying.
+Provision hosting (Secure Static Hosting or Cloud for WordPress) for a domain in the account. The FIRST provision for a domain starts a **15-day free trial** ($0 now) that **auto-renews** at the plan price when the trial ends; a re-provision after deprovision is charged immediately, to account credit or directly in USDC with `"payWith": "usdc"` (HTTP 402, then repeat with `PAYMENT-SIGNATURE`; kept as account credit if provisioning fails), and counts toward the monthly API spend limit (one free trial per domain). Provisioning **switches the domain to Porkbun nameservers** if it isn't already — pass `agreeToNameserverChange: true` to allow that. Supports `dryRun`. Remote setup can be async: `status` may be `PENDING` — poll `/hosting/get` until `ACTIVE` before deploying.
 
 **Cloud for WordPress:** pass a `CLOUDWORDPRESS…` sku to provision a managed WordPress site instead of static hosting. The file endpoints (deploy/files/deleteFile/makeDir) do not apply — manage the site through WordPress, using `/hosting/createWpCredentials/{domain}` for REST API credentials.
 
@@ -2744,6 +2777,8 @@ Request body fields:
 | `acknowledgedCost` | integer | yes | Echo the plan price in cents (300 monthly / 3000 yearly) to confirm the account holder understands the auto-renew / charge. Mismatch returns COST_ACKNOWLEDGMENT_REQUIRED. |
 | `agreeToTerms` | string | yes |  |
 | `agreeToNameserverChange` | boolean | no | Required (true) when the domain is not already on Porkbun nameservers — provisioning will switch them. |
+| `payWith` | string | no | Optional. `"usdc"` pays for this purchase directly in USDC on Base over x402 instead of from account credit. The first call answers HTTP 402 (`PAYMENT_REQUIRED`) with Coinbase's terms in the `PAYMENT-REQUIRED` header and charges nothing; an x402 client pays and repeats the same request with a `PAYMENT-SIGNATURE` header, and the purchase completes in that call. If it then fails, the payment stays on the account as account credit; it is not sent back to the wallet. If your wallet pays URLs itself instead, pay the 402's `x402Url` (or have a person pay `payUrl`) and repeat the request with `usdcCheckoutId`. See the guide: https://porkbun.com/llms/guides/pay-with-usdc-x402 |
+| `usdcCheckoutId` | string | no | With `payWith: "usdc"`: the `checkoutId` from an earlier `PAYMENT_REQUIRED`, once its `x402Url` or `payUrl` has been paid. Send it with otherwise the same request; the purchase completes if the checkout is paid and was opened for this purchase. |
 | `dryRun` | boolean | no | Validate + preview without provisioning or charging. |
 
 ```bash
