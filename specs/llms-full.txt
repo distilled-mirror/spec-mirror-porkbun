@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.56
+# Porkbun API v3 — v3.60
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -134,6 +134,15 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 | `INVOICE_PDF_FAILED` | The invoice PDF could not be generated; retry, or use `GET /account/invoice/{orderId}`. HTTP 500. |
 
 | `MISSING_PARAMETER` | A required field or path segment is absent; the message names it |
+| `INSUFFICIENT_SCOPE` | HTTP 403: the API key's permissions (`keyScopes`) do not include the one this call needs (`requiredScope`). Nothing was changed. The account holder can change the key's permissions in API Access |
+| `ID_VERIFICATION_REQUIRED` | `/domain/create`: the account holder must verify their identity at https://porkbun.com/account/idVerification before this registration (or pay it by card). Nothing was charged. Not currently enforced |
+| `NEW_ACCOUNT_LIMIT` | `/domain/create`: a new account reached the number of API registrations allowed in its first days (`retryAfter` seconds until it lifts). Nothing was charged. Not currently enforced |
+| `VERIFICATION_REQUIRED` | The account's email and phone must be verified first (the phone can be verified over the API: `/account/verifyPhone/send` and `/confirm`); nothing was charged |
+| `TERMS_NOT_AGREED` | Send `agreeToTerms: "yes"` |
+| `ORDER_FAILED` | The order could not be created; nothing was charged. Retry |
+| `INVALID_INPUT` | A parameter is missing, the wrong type, or out of range; the message says which |
+| `API_ACCESS_DISABLED` | The domain is not opted in to API access. Only the account holder can turn it on (per domain, or for all domains, in account settings); `list_domains` / `/domain/listAll` show `apiAccess` |
+| `DOMAIN_NOT_ACTIVE` | The domain is not in a state that can be managed right now (for example pending or expired) |
 | `DOMAIN_NOT_FOUND` | The domain is not in this account (check the spelling, or list them with `/domain/listAll`). The response names the account in `account`, so a key for the wrong account is obvious |
 
 **Rate limiting**
@@ -148,6 +157,26 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 |------|---------|
 | `INVALID_DOMAIN` | Domain parameter is invalid or not in your account (on `/dns/*` the response names the account in `account`) |
 | `DOMAIN_NOT_AVAILABLE` | Domain is not available for registration |
+| `DNS_CHANGE_CONFIRMATION_REQUIRED` | `/email/addForward` would delete other apex MX records or rewrite the SPF record; `dnsChanges` says what. Nothing was changed. Resend with `confirmDnsChanges: true` once the user agrees |
+| `FORWARD_CREATE_FAILED` | The forward could not be saved (the forwarding DNS records are already in place); retry |
+| `FORWARD_DELETE_FAILED` | The forward could not be deleted; check `/email/getForwards/{domain}` and retry |
+| `DUPLICATE_FORWARD` | That address already forwards there; nothing needed doing |
+| `FORWARD_NOT_FOUND` | No forward with that `address` and `forwardTo` (list them with `/email/getForwards/{domain}`) |
+| `FORWARD_LIMIT_REACHED` | The domain has its maximum number of email forwards (`limits`) |
+| `MAILBOX_EXISTS` | The address is already an email hosting mailbox (so it cannot be a forward, or a second mailbox) |
+| `FORWARD_EXISTS` | The address is an email forward, so it cannot also be a mailbox |
+| `NO_PENDING_MAILBOX` | `/email/setupMailbox`: no paid or trial mailbox is waiting to be set up |
+| `INVALID_PASSWORD` | The mailbox password breaks the rules in the message; or leave it out to have one generated |
+| `EMAIL_HOSTING_UNAVAILABLE` | Email hosting cannot be bought on this account right now (new accounts that paid in crypto, as on the website); nothing was charged |
+| `MAILBOX_PROVISION_FAILED` | The mailbox could not be created; the charge was returned to account credit |
+| `MAILBOX_NOT_FOUND` | `/email/renewMailbox`: no mailbox with that `mailboxId` / `address` on the domain |
+| `MAILBOX_RENEW_FAILED` | The renewal did not go through; the charge was returned to account credit |
+| `MAILBOX_SETUP_FAILED` | The mailbox could not be given its address; nothing changed |
+| `WILDCARD_NOT_SUPPORTED` | Catch-all / wildcard forwards are not supported |
+| `INVALID_EMAIL` | An address is not a valid email address |
+| `EMAIL_BLOCKED` | Email services are blocked on this domain; contact support |
+| `IDN_LANGUAGE_REQUIRED` | `/domain/create` of an internationalized name whose registry needs its language, sent without `idnLanguage`. Nothing was charged; `idnLanguages` lists the accepted `{name, code}` pairs. Resend with `idnLanguage` |
+| `INVALID_IDN_LANGUAGE` | `idnLanguage` is not one of that registry's languages. Nothing was charged; use a code from `idnLanguages` |
 | `INSUFFICIENT_FUNDS` | Not enough **prepaid account credit**. A purchase paid from credit never charges a saved card by itself, but `POST /account/topup` can charge a saved card and add credit in one call, and the purchase can instead be paid directly with `payWith` (`card` or `usdc`). The response carries `cost`, `balance` and `shortfall` in cents, plus `topUpAvailable` (whether a saved card can be charged now) and, when true, `topUpAmountToCover`, and `usdcAmountToCover` (the `POST /account/topupCrypto` amount that covers the shortfall after Coinbase's fee); `next_action.type` is `top_up` or `add_funds` accordingly. Dry runs report the same fields |
 | `DNSSEC_CREATE_FAILED` | The registry refused the DS record; the message carries its reason and code |
 | `DNSSEC_DELETE_FAILED` | The registry did not accept the DS removal |
@@ -256,9 +285,9 @@ Additional endpoint-specific codes may be returned; always check `message` for d
 |------|---------|
 | `INVALID_WEBHOOK_URL` | The endpoint URL is not an acceptable delivery target. It must be `https://` on port 443, carry no username/password, and its hostname must resolve to a public internet address — private, loopback, link-local, CGNAT and other reserved ranges are refused. Re-checked immediately before every delivery, so an endpoint whose DNS later points at private space stops being delivered to. |
 
-## API key scoping (IP &amp; domain restrictions)
+## API key restrictions (IP addresses, domains and permissions)
 
-Each API key can optionally be restricted to specific source IPs and/or specific target domains. Both restrictions are configured per key at [porkbun.com/account/api](https://porkbun.com/account/api) (click the gear icon next to any key). Empty/unset = no restriction.
+Each API key can optionally be restricted to specific source IPs, specific target domains, and specific permissions. All three are configured per key at [porkbun.com/account/api](https://porkbun.com/account/api) (click the gear icon next to any key). Empty/unset = no restriction.
 
 **Source IP allowlist.** When set, requests from any other IP fail immediately with HTTP 403 `IP_NOT_ALLOWED`, before any other endpoint logic runs. Supports IPv4 and IPv6, both bare addresses and CIDR ranges. One entry per line in the UI. Examples:
 
@@ -275,7 +304,9 @@ example.com
 myothersite.io
 ```
 
-**Recommended pattern for AI agents.** Hand the agent its own dedicated API key, restricted to the domains it actually needs to manage and (if you know the agent's egress IP) restricted to that IP. The blast radius of an accidentally-leaked key drops to `operations on these domains from this IP` instead of `anything on the account`.
+**Permissions.** When set, the key can only call operations in its scopes: `read` (see everything, change nothing; always included), `dns` (DNS records, URL forwarding), `domains` (nameservers, contacts, auto-renew, glue, DNSSEC, transfer settings, moving to Cloudflare, SSL certificate downloads), `email` (forwarding, mailboxes), `hosting`, `purchase` (anything that charges), `funding` (adding credit, auto top-up) and `account` (webhooks, invitations, phone verification). The settings page offers **Read-only** and **Manage, but no purchases** (everything except `purchase` and `funding`) as presets. Each operation lists the scope it needs in `x-porkbun-scope`. A call outside the key's scopes fails with HTTP 403 `INSUFFICIENT_SCOPE` (with `requiredScope` and `keyScopes`) and changes nothing; a dry run of a purchase or top-up needs only `read`. `/ping` returns the key's `scopes`. Apps can ask for scopes when requesting a key (`/apikey/request`); the account holder can grant those or less. Connections from ChatGPT, Claude and other apps choose them on the consent page, and the directory endpoint (`/mcp/no-purchases`) only grants scopes that cannot spend.
+
+**Recommended pattern for AI agents.** Hand the agent its own dedicated API key with only the permissions it needs (often **Manage, but no purchases**), restricted to the domains it actually needs to manage and (if you know the agent's egress IP) to that IP. The blast radius of an accidentally-leaked key drops to `these operations on these domains from this IP` instead of `anything on the account`.
 
 ## Idempotency
 
@@ -366,6 +397,28 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.60
+
+- **Asking for permissions when a key is created.** `/apikey/request` takes optional `scopes`; the approval page lists them in plain words, the account holder can grant those or less (never more), and the key gets what they granted. Connecting ChatGPT, Claude or another app through the hosted connector now asks which permissions the connection gets, and the directory endpoint (`/mcp/no-purchases`) can only grant permissions without `purchase` and `funding`, so its "no purchases" promise is enforced by the key itself.
+- **Permission scopes on API keys.** A key can be limited to `read` (see everything, change nothing), or to any of `dns`, `domains`, `email`, `hosting`, `purchase`, `funding` and `account` on top of it; "Manage, but no purchases" is every scope except `purchase` and `funding`. Existing keys keep full access. Each operation lists the scope it needs in `x-porkbun-scope`; a call outside the key's permissions returns 403 `INSUFFICIENT_SCOPE` with `requiredScope` and `keyScopes`, and nothing changes. A dry run of a purchase or top-up needs only `read`. `/ping` returns the key's `scopes`. Set them in API Access on porkbun.com.
+- **First registrations over the API.** An account's first domain registration can be made over the API; the website is not required first. `ID_VERIFICATION_REQUIRED` and `NEW_ACCOUNT_LIMIT` are reserved for checks on new accounts that are measured but not currently enforced.
+
+### v3.59
+
+- **The spec declares retries and rate limits per operation.** Every authenticated POST lists the optional `Idempotency-Key` header (`components.parameters.IdempotencyKey`), every authenticated operation lists its 429 response with `Retry-After`, and success responses list the `X-RateLimit-*` headers, so tools generated from the spec know which calls are safe to retry and how to back off. Behaviour is unchanged.
+- **Email hosting mailboxes.** `GET /email/getMailboxes/{domain}` lists them (with the price and mail client settings), `POST /email/setupMailbox/{domain}` gives a waiting mailbox (already paid for, or the free trial) its address and password for free, and `POST /email/createMailbox/{domain}` buys one ($36.00 a year) and sets it up in one call, paid from credit or with `payWith`. `POST /email/renewMailbox/{domain}` adds a year now (set-up mailboxes also renew on their own when due; `getMailboxes` shows `autoRenews` and `renewalPrice`). A password is generated and returned once unless one is sent. Mail DNS is set up as for forwarding, asking before replacing another mail service (`DNS_CHANGE_CONFIRMATION_REQUIRED`). Same rules as the website: verified account, address rules, no address both a mailbox and a forward, no purchase for new accounts that paid in crypto. Not available on sandbox keys.
+- **API registrations get the free email hosting trial,** a mailbox waiting to be set up, like registrations on the website.
+
+### v3.58
+
+- **Email forwarding.** `GET /email/getForwards/{domain}`, `POST /email/addForward/{domain}` and `POST /email/deleteForward/{domain}` manage forwards (an address at the domain delivered to another mailbox), with the same rules as the website: free up to the domain's limit, no catch-all, not on an address that is an email hosting mailbox. Adding the first forward sets up Porkbun's MX and SPF at the apex; when that would delete another mail service's MX records or rewrite an SPF record, it is refused with `DNS_CHANGE_CONFIRMATION_REQUIRED` and a `dnsChanges` description until resent with `confirmDnsChanges: true`. Deleting the last forward removes those records. Not available on sandbox keys.
+- **`/email/setPassword` honours per-key domain scoping.** A key restricted to certain domains could set mailbox passwords on the account's other domains, because the domain arrives in the body rather than the path.
+
+### v3.57
+
+- **Registering internationalized domain names (IDNs).** `/domain/create` takes `idnLanguage`: the language the name is written in, as a code or name from `idnLanguages` (any case). Registries need it for IDNs (Verisign refused .com and .net ones with "Language tag required"); an IDN sent without one, under a TLD that has languages, is now refused before any charge with `IDN_LANGUAGE_REQUIRED`, listing the accepted languages. `/domain/checkDomain` (single and bulk) returns `idnLanguages` for IDN names so the choice can be made up front. Ignored for plain ASCII names.
+- **Unicode names.** `/domain/create` and `/domain/checkDomain` accept a name in Unicode (`café.com`, percent-encoded in the path or not) and work on its punycode form (`xn--caf-dma.com`). Before, the non-ASCII characters were stripped and a different name was checked.
 
 ### v3.56
 
@@ -673,6 +726,8 @@ Returns the caller's public IP address. Optionally validates API credentials.
 
 Useful for agents and clients to verify their API key is working before making other calls.
 
+**Key permission needed:** `read`
+
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/ping \
   -H 'Content-Type: application/json' \
@@ -688,6 +743,7 @@ Response fields:
 | `xForwardedFor` | string | Raw value of the X-Forwarded-For header |
 | `credentialsValid` | boolean | Present and true when valid credentials were supplied |
 | `account` | string | Username of the Porkbun account the key belongs to. Present when valid credentials were supplied |
+| `scopes` | string[] | The key's permission scopes, or ["full"] for full access. Present when valid credentials were supplied |
 
 ## GET /api/json/v3/ping
 
@@ -700,6 +756,8 @@ Returns the caller's public IP address. Optionally validates API credentials.
 - **Invalid credentials supplied** — returns an error.
 
 Useful for agents and clients to verify their API key is working before making other calls.
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -720,12 +778,15 @@ Response fields:
 | `xForwardedFor` | string | Raw value of the X-Forwarded-For header |
 | `credentialsValid` | boolean | Present and true when valid credentials were supplied |
 | `account` | string | Username of the Porkbun account the key belongs to. Present when valid credentials were supplied |
+| `scopes` | string[] | The key's permission scopes, or ["full"] for full access. Present when valid credentials were supplied |
 
 ## POST /api/json/v3/ip
 
 **Get caller IP address**
 
 Returns the caller's public IP address. No credentials required. Use the `api-ipv4.porkbun.com` hostname if you need to force an IPv4 address.
+
+**Key permission needed:** `read`
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/ip \
@@ -747,6 +808,8 @@ Response fields (IpResponse):
 
 Returns the caller's public IP address. No credentials required. Use the `api-ipv4.porkbun.com` hostname if you need to force an IPv4 address.
 
+**Key permission needed:** `read`
+
 ```bash
 curl 'https://api.porkbun.com/api/json/v3/ip'
 ```
@@ -766,6 +829,8 @@ Response fields (IpResponse):
 Retrieve default domain pricing information for all supported TLDs, or only the ones you ask for. Does not require authentication. Prices are in US dollars.
 
 Filter with `tld` (one TLD) and/or `tlds` (several). Names are case-insensitive, a leading dot is ignored, and IDN TLDs may be sent in Unicode or punycode (`みんな` or `xn--q9jyb4c`). A TLD Porkbun does not sell is left out of `pricing` and listed in `unsupported`; if none of the requested TLDs is sold the response is `INVALID_TLD` (HTTP 400). No filter returns every TLD.
+
+**Key permission needed:** `read`
 
 Request body fields:
 
@@ -795,6 +860,8 @@ Response fields:
 Retrieve default domain pricing information for all supported TLDs, or only the ones you ask for. Does not require authentication. Prices are in US dollars.
 
 Filter with `tld` (one TLD) and/or `tlds` (several). Names are case-insensitive, a leading dot is ignored, and IDN TLDs may be sent in Unicode or punycode (`みんな` or `xn--q9jyb4c`). A TLD Porkbun does not sell is left out of `pricing` and listed in `unsupported`; if none of the requested TLDs is sold the response is `INVALID_TLD` (HTTP 400). No filter returns every TLD. On GET, `tlds` is comma-separated: `?tlds=com,io,dev`.
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -832,6 +899,7 @@ Request body fields:
 | `codeChallengeMethod` | string | no | PKCE challenge method. Only S256 is supported. |
 | `sandbox` | boolean | no | If true, skip the approval flow and immediately return a throwaway SANDBOX key pair (public `pk1_sb_`, secret `sk1_sb_`) for a fresh test account seeded with $1000 fake credit. Use it as apikey/secretapikey against the same base URL to run the whole API in the isolated sandbox — no real registry actions, DNS changes, or charges. Rate-limited (20/IP/hour). |
 | `returnUrl` | string | no | Optional app-return redirect for native/mobile apps. Requires codeChallenge (PKCE). Must be an HTTPS URL your app claims as a Universal Link / App Link (custom URI schemes are rejected — another app could hijack them). After the account holder approves in the system browser, Porkbun redirects here with `?status=approved&requestToken=<token>` (or `status=denied`) so control returns to your app; it then calls /apikey/retrieve with its codeVerifier to receive the keys. The key is NEVER placed in the redirect — only the request token and status. |
+| `scopes` | string[] | no | Optional permissions for the new key; `read` is always included. Shown to the account holder on the approval page, and the key gets exactly these. Leave out for a full-access key. Ask for the least you need, e.g. ["dns"] for a DNS updater. The account holder may grant less than you ask for (never more), so check `/ping` (`scopes`) once you have the key. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/apikey/request \
@@ -900,6 +968,12 @@ Duplicates are removed before the budget is charged. If more than 25 remain, not
 
 **Latency.** This is synchronous: one request, one complete answer, no polling. 25 domains across 25 different TLDs measures around 3 seconds, because the connection manager fans a batch that fits under every registry's cap out as a single command. A few registries cap low and **.de accepts one domain per command**, so a batch heavy in those becomes several sequential commands; if that would need more than 4, the call is refused with `BULK_CHECK_TOO_SLOW` rather than left to time out mid-response.
 
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
 Request body fields:
 
 | Field | Type | Required | Description |
@@ -933,9 +1007,12 @@ Check if a domain is available for registration and retrieve current pricing. In
 
 **Sustained bulk checking.** An account that checks about 1,800 names over three hours while registering little of what it checks (fewer than one domain per 200 names over a day) is treated as scanning for the next 24 hours: its checks, single and bulk, on every API version, share a budget of 50 names per 5 minutes. Over it, the call is refused whole with `RATE_LIMIT_EXCEEDED`, `reason: "SUSTAINED_BULK_CHECKING"` and `retryAfter`; nothing is part-answered. Normal use, including checking a long list of candidate names once, is nowhere near this. Accounts that buy (100 or more registrations in a year) and affiliates sending orders are never treated as scanning, and a per-key limit from support overrides it.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/domain/checkDomain/{domain} \
@@ -1013,11 +1090,14 @@ Add `dryRun: true` to validate everything and preview the cost WITHOUT registeri
   "message": "Dry run: this registration would succeed and cost $9.73. No order was created and no charge was made.",
   "requestId": "019e04fa-258d-7d11-aa86-4d5795c3fe8f"
 }
-```
+``` Every registration includes a free email hosting trial mailbox, waiting to be set up with /email/setupMailbox (see /email/getMailboxes).
+
+**Key permission needed:** `purchase`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -1025,6 +1105,7 @@ Request body fields:
 |---|---|---|---|
 | `cost` | integer | yes | The registration cost in pennies (USD cents). Must exactly equal the total price for the domain at its minimum registration duration. Obtain this from /domain/checkDomain first. |
 | `agreeToTerms` | string | yes | Must be 'yes' or '1' to confirm agreement to the Domain Name Registration Agreement, Product Terms of Service, Privacy Policy, and automatic renewal terms. |
+| `idnLanguage` | string | no | Required for an internationalized domain name (IDN) under a TLD whose registry needs its language: a code or language name from `idnLanguages`, as returned by /domain/checkDomain or by the IDN_LANGUAGE_REQUIRED error (any case). Ignored for plain ASCII names. |
 | `whoisPrivacy` | boolean | no | Optional. Override WHOIS privacy for this registration. When omitted, the account-level default is used (set under Account Security Settings on porkbun.com/account — defaults to enabled). Pass `true` to force-enable privacy or `false` to register with public contact info. Strings `"on"`/`"off"`, `"true"`/`"false"`, `"yes"`/`"no"`, `"1"`/`"0"` are also accepted. Has no effect on TLDs that don't support WHOIS privacy (privacy stays off regardless). |
 | `payWith` | string | no | Optional. `"usdc"` pays for this purchase directly in USDC on Base over x402 instead of from account credit. The first call answers HTTP 402 (`PAYMENT_REQUIRED`) with Coinbase's terms in the `PAYMENT-REQUIRED` header and charges nothing; an x402 client pays and repeats the same request with a `PAYMENT-SIGNATURE` header, and the purchase completes in that call. If it then fails, the payment stays on the account as account credit; it is not sent back to the wallet. If your wallet pays URLs itself instead, pay the 402's `x402Url` (or have a person pay `payUrl`) and repeat the request with `usdcCheckoutId`. See the guide: https://porkbun.com/llms/guides/pay-with-usdc-x402. `"card"` pays by card through a Stripe Link agent wallet over MPP instead, with a real hold: the 402 carries a single-use `payUrl` and a `cardPaymentId`; pay the link (it authorizes, not charges), then repeat with `cardPaymentId`; the hold is captured if the purchase succeeds and released if it fails. Guide: https://porkbun.com/llms/guides/pay-with-card-mpp |
 | `usdcCheckoutId` | string | no | With `payWith: "usdc"`: the `checkoutId` from an earlier `PAYMENT_REQUIRED`, once its `x402Url` or `payUrl` has been paid. Send it with otherwise the same request; the purchase completes if the checkout is paid and was opened for this purchase. |
@@ -1120,9 +1201,12 @@ Add `dryRun: true` to validate everything and preview the cost WITHOUT renewing 
 
 **Paying for it.** Two ways. **From prepaid account credit** (the default): no card on file is charged at purchase time, so the balance has to be there first. Read it with `GET /account/balance`; add to it with `POST /account/topup` (a saved card, with the account holder's OK), `POST /account/topupMpp` (the user's card from a Stripe Link agent wallet), `POST /account/topupCrypto` (USDC) or at https://porkbun.com/account/credit, and auto top-up at https://porkbun.com/account/api keeps it filled. Too little credit returns `INSUFFICIENT_FUNDS` with `cost`, `balance`, `shortfall` and `usdcAmountToCover` in cents. **Or directly in USDC:** add `"payWith": "usdc"` and an x402 client pays the HTTP 402 this returns (`PAYMENT_REQUIRED`, terms in the `PAYMENT-REQUIRED` header) and repeats the request with `PAYMENT-SIGNATURE`; no credit is needed, and if the purchase fails the payment stays on the account as credit (https://porkbun.com/llms/guides/pay-with-usdc-x402). **Or by card with a hold:** `"payWith": "card"` returns a single-use `payUrl` to pay from a Stripe Link agent wallet (it only authorizes); repeat with `cardPaymentId`, and the hold is captured if the purchase succeeds or released if it fails (https://porkbun.com/llms/guides/pay-with-card-mpp). Either way the account's monthly API spend limit applies ($100 a month until the account holder sets their own; `MONTHLY_SPEND_LIMIT_EXCEEDED`). `dryRun: true` reports cost and balance without charging, and `dryRun` with `cost: 0` returns a quote.
 
+**Key permission needed:** `purchase`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -1218,9 +1302,12 @@ Add `dryRun: true` to validate everything and preview the cost WITHOUT initiatin
 
 **Paying for it.** Two ways. **From prepaid account credit** (the default): no card on file is charged at purchase time, so the balance has to be there first. Read it with `GET /account/balance`; add to it with `POST /account/topup` (a saved card, with the account holder's OK), `POST /account/topupMpp` (the user's card from a Stripe Link agent wallet), `POST /account/topupCrypto` (USDC) or at https://porkbun.com/account/credit, and auto top-up at https://porkbun.com/account/api keeps it filled. Too little credit returns `INSUFFICIENT_FUNDS` with `cost`, `balance`, `shortfall` and `usdcAmountToCover` in cents. **Or directly in USDC:** add `"payWith": "usdc"` and an x402 client pays the HTTP 402 this returns (`PAYMENT_REQUIRED`, terms in the `PAYMENT-REQUIRED` header) and repeats the request with `PAYMENT-SIGNATURE`; no credit is needed, and if the purchase fails the payment stays on the account as credit (https://porkbun.com/llms/guides/pay-with-usdc-x402). **Or by card with a hold:** `"payWith": "card"` returns a single-use `payUrl` to pay from a Stripe Link agent wallet (it only authorizes); repeat with `cardPaymentId`, and the hold is captured if the purchase succeeds or released if it fails (https://porkbun.com/llms/guides/pay-with-card-mpp). Either way the account's monthly API spend limit applies ($100 a month until the account holder sets their own; `MONTHLY_SPEND_LIMIT_EXCEEDED`). `dryRun: true` reports cost and balance without charging, and `dryRun` with `cost: 0` returns a quote.
 
+**Key permission needed:** `purchase`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes | The domain name to transfer (e.g. `example.com`). |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -1288,6 +1375,8 @@ Response fields (DryRunPreviewResponse):
 
 Where a pending inbound transfer is and what it is waiting on: whether it is held at `PENDINGDNS`, whether its DNS zone exists, how many records are in it, what the domain currently delegates to, and the next step to take. Use it to resume a no-downtime transfer without keeping state of your own.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes | Domain name. |
@@ -1313,9 +1402,12 @@ Response fields:
 
 Create the Porkbun DNS zone for a domain whose inbound transfer is held at `PENDINGDNS`, so records can be added **before** the domain moves. The zone is created deliberately rather than as a side effect of the first record write. Returns the Porkbun nameservers to point the domain at. Then load the zone with `/dns/import/{domain}` (or the `/dns/*` endpoints) and release with `/domain/startTransfer/{domain}`. Supports `dryRun`.
 
+**Key permission needed:** `domains`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes | Domain name. |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Response fields:
 
@@ -1336,9 +1428,12 @@ Release a transfer held at `PENDINGDNS` into the registry pipeline. Nothing rele
 
 Refuses with `TRANSFER_ZONE_EMPTY` if the zone has no records, which is the outage the hold exists to prevent. Pass `force: true` only if the domain genuinely needs no DNS at Porkbun. Supports `dryRun`.
 
+**Key permission needed:** `domains`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes | Domain name. |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -1362,9 +1457,12 @@ Cancel a pending inbound transfer and refund the order. The sequence is delibera
 
 The response reports `withdrawnAtRegistry`, `registryResultCode`, `refunded` and `refundAmount` so you can see exactly how far it got. Supports `dryRun`.
 
+**Key permission needed:** `domains`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes | Domain name. |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Response fields:
 
@@ -1391,9 +1489,12 @@ Replace the authorization code on an inbound transfer that stalled because the c
 
 The new code is validated against the registry before it is stored, so a bad code is rejected here (`INVALID_AUTH_CODE`) rather than failing again later. Only transfers in a repairable state qualify; anything else returns `TRANSFER_NOT_REPAIRABLE`. Supports `dryRun`.
 
+**Key permission needed:** `domains`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes | Domain name. |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -1417,6 +1518,8 @@ Response fields:
 **Get transfer status**
 
 Returns the most recent transfer record for the specified domain in your account. Authenticate using `X-API-Key` and `X-Secret-API-Key` headers, or `Authorization: Bearer <token>`.
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -1443,6 +1546,8 @@ Response fields (GetTransferResponse):
 **List active transfers**
 
 Returns all active inbound domain transfers for your account (excludes completed and canceled transfers). Authenticate using `X-API-Key` and `X-Secret-API-Key` headers, or `Authorization: Bearer <token>`.
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -1481,6 +1586,12 @@ Retrieve domains in the authenticated account. Results are returned in chunks of
 - `sortDirection` — `asc` / `desc`
 
 Supports both GET (with header auth) and POST (with body or header auth). For multi-value `tlds` on GET, use bracket syntax: `?tlds[]=com&tlds[]=io`.
+
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -1530,6 +1641,8 @@ Retrieve domains in the authenticated account. Results are returned in chunks of
 
 Supports both GET (with header auth) and POST (with body or header auth). For multi-value `tlds` on GET, use bracket syntax: `?tlds[]=com&tlds[]=io`.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
@@ -1566,6 +1679,8 @@ Response fields (DomainListAllResponse):
 
 Get the metadata for a single domain in the authenticated account. Returns the same per-domain shape as `listAll` items but as a single object. Returns HTTP 404 with code `DOMAIN_NOT_FOUND` if the domain isn't in the account.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes | Fully qualified domain name in the authenticated account. |
@@ -1593,9 +1708,12 @@ Response fields:
 
 Update the auto-renew setting for one or more domains. The domain can be passed in the URL path or in the `domains` array in the request body (or both). Both are combined and deduplicated.
 
+**Key permission needed:** `domains`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | no | Optional single domain in URL. Omit or use `/domain/updateAutoRenew/` (without trailing domain) when using the `domains` body array instead. |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -1623,9 +1741,12 @@ Response fields:
 
 Retrieve the authoritative nameservers listed at the registry for the domain. Supports both GET (with header auth) and POST (with body or header auth). **Nameservers are an unordered set.** This reads live from the registry, and registries are free to return the set in any order — so the order here will often differ from the order you sent to `/domain/updateNs`. Order carries no meaning in DNS (an NS RRset is unordered, RFC 1034/2181) and is not preserved by the parent zone. Compare nameservers as a set; if you are writing a Terraform provider or similar, model this as a set, not an ordered list, or every plan will show phantom drift.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/domain/getNs/{domain} \
@@ -1645,6 +1766,8 @@ Response fields:
 **Get nameservers**
 
 Retrieve the authoritative nameservers listed at the registry for the domain. Supports both GET (with header auth) and POST (with body or header auth). **Nameservers are an unordered set.** This reads live from the registry, and registries are free to return the set in any order — so the order here will often differ from the order you sent to `/domain/updateNs`. Order carries no meaning in DNS (an NS RRset is unordered, RFC 1034/2181) and is not preserved by the parent zone. Compare nameservers as a set; if you are writing a Terraform provider or similar, model this as a set, not an ordered list, or every plan will show phantom drift.
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -1672,9 +1795,12 @@ Response fields:
 
 Update the nameservers for the domain at the registry. The list you send is applied as a set — the registry may store and return it in a different order, so do not expect `/domain/getNs` to echo your ordering back. See `/domain/getNs`.
 
+**Key permission needed:** `domains`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -1703,9 +1829,12 @@ Response fields (BasicResponse):
 
 Retrieve all glue records (host objects) registered under the domain. Supports both GET (with header auth) and POST (with body or header auth).
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/domain/getGlue/{domain} \
@@ -1725,6 +1854,8 @@ Response fields:
 **Get glue records**
 
 Retrieve all glue records (host objects) registered under the domain. Supports both GET (with header auth) and POST (with body or header auth).
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -1752,10 +1883,13 @@ Response fields:
 
 Create a glue record (host object) for a nameserver hostname under the domain. Use this when you want to host a nameserver at a subdomain of the domain itself (e.g. ns1.example.com).
 
+**Key permission needed:** `domains`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
 | `subdomain` | path | yes | The subdomain portion only (e.g. 'ns1' for ns1.example.com) |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -1784,10 +1918,13 @@ Response fields (BasicResponse):
 
 Update the IP addresses of a glue record. All existing IP addresses are replaced with the supplied list.
 
+**Key permission needed:** `domains`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
 | `subdomain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -1816,10 +1953,13 @@ Response fields (BasicResponse):
 
 Delete a glue record (host object) for a subdomain.
 
+**Key permission needed:** `domains`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
 | `subdomain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/domain/deleteGlue/{domain}/{subdomain} \
@@ -1842,9 +1982,12 @@ Response fields (BasicResponse):
 
 Retrieve all active URL forwards for a domain. Supports both GET (with header auth) and POST (with body or header auth).
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/domain/getUrlForwarding/{domain} \
@@ -1864,6 +2007,8 @@ Response fields (GetUrlForwardingResponse):
 **List URL forwards**
 
 Retrieve all active URL forwards for a domain. Supports both GET (with header auth) and POST (with body or header auth).
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -1891,9 +2036,12 @@ Response fields (GetUrlForwardingResponse):
 
 Add a URL forward for a domain or subdomain.
 
+**Key permission needed:** `dns`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -1927,10 +2075,13 @@ Response fields (BasicResponse):
 
 Delete a specific URL forward by ID.
 
+**Key permission needed:** `dns`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
 | `id` | path | yes | URL forward record ID |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/domain/deleteUrlForward/{domain}/{id} \
@@ -1952,6 +2103,8 @@ Response fields (BasicResponse):
 **Get domain contacts**
 
 Return the domain's four contacts (registrant, admin, tech, billing) with their current field values. Also available via POST.
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -1979,9 +2132,12 @@ Edit the domain's contacts. Send a `contacts` object keyed by role (`registrant`
 
 **Address-validated TLDs.** On a **registrant** change for a TLD that requires a validated address (`.de`, `.nrw`, `.uk`/`.co.uk`/…, `.us`, `.ca`, `.nyc`, `.au`, `.eu`, `.in`/`.co.in`/…, `.nz`/`.co.nz`/…), the API runs Google Address Validation (per-account rate-limited + 24h cached). If the address needs correction the call returns `ADDRESS_VALIDATION_REQUIRED` with a `suggestedAddress` and `addressValidationStatus`; re-submit with `addressValidationChoice` = `accept_suggestion` (save the standardized address) or `use_as_entered` (keep yours — stays blocked if a real correction was offered). For `.de`, DENIC registry verification is then attempted automatically (address-fingerprint / email); if it still needs a proof-of-address document upload, that is completed at porkbun.com. **Still not supported via API:** a registrant name/organization change on a `.au` domain is an auDA paid ownership trade and returns `REGISTRANT_CHANGE_NOT_SUPPORTED` (do it at porkbun.com). Admin/tech/billing edits are unaffected everywhere.
 
+**Key permission needed:** `domains`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -2012,9 +2168,12 @@ Response fields:
 
 Retrieve all editable DNS records for a domain. SOA records and Porkbun default NS records are excluded. Supports both GET (with header auth) and POST (with body or header auth).
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/dns/retrieve/{domain} \
@@ -2035,6 +2194,8 @@ Response fields (DnsRecordsResponse):
 **Retrieve all DNS records**
 
 Retrieve all editable DNS records for a domain. SOA records and Porkbun default NS records are excluded. Supports both GET (with header auth) and POST (with body or header auth).
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -2063,10 +2224,13 @@ Response fields (DnsRecordsResponse):
 
 Retrieve a specific DNS record by its numeric ID. Supports both GET (with header auth) and POST (with body or header auth).
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
 | `id` | path | yes | Numeric DNS record ID |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/dns/retrieve/{domain}/{id} \
@@ -2087,6 +2251,8 @@ Response fields (DnsRecordsResponse):
 **Retrieve DNS record by ID**
 
 Retrieve a specific DNS record by its numeric ID. Supports both GET (with header auth) and POST (with body or header auth).
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -2116,11 +2282,14 @@ Response fields (DnsRecordsResponse):
 
 Retrieve all DNS records for a domain that match a specific subdomain and record type. Omit `subdomain` (or leave the path segment empty) to query the root domain. Supports both GET (with header auth) and POST (with body or header auth).
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
 | `type` | path | yes | DNS record type (A, AAAA, CNAME, MX, TXT, etc.) |
 | `subdomain` | path | no | Subdomain portion only. Omit or leave empty for root domain records. |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/dns/retrieveByNameType/{domain}/{type}/{subdomain} \
@@ -2141,6 +2310,8 @@ Response fields (DnsRecordsResponse):
 **Retrieve DNS records by name and type**
 
 Retrieve all DNS records for a domain that match a specific subdomain and record type. Omit `subdomain` (or leave the path segment empty) to query the root domain. Supports both GET (with header auth) and POST (with body or header auth).
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -2171,9 +2342,12 @@ Response fields (DnsRecordsResponse):
 
 Create a new DNS record for a domain. The record ID is returned in the response.
 
+**Key permission needed:** `dns`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -2207,10 +2381,13 @@ Response fields:
 
 Edit a specific DNS record by its numeric ID. Send only the fields you want to change: any field left out keeps its current value (send `"name": ""` to move the record to the apex). SOA and default Porkbun NS records cannot be edited.
 
+**Key permission needed:** `dns`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
 | `id` | path | yes | Numeric DNS record ID |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -2244,11 +2421,14 @@ Response fields (BasicResponse):
 
 Replace the content of all records matching the given subdomain and type. SOA and NS records cannot be edited with this method (use edit by ID instead).
 
+**Key permission needed:** `dns`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
 | `type` | path | yes |  |
 | `subdomain` | path | no | Subdomain portion only. Omit or leave empty for root domain records. |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -2280,10 +2460,13 @@ Response fields (BasicResponse):
 
 Delete a specific DNS record. SOA and default Porkbun NS records cannot be deleted.
 
+**Key permission needed:** `dns`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
 | `id` | path | yes | Numeric DNS record ID |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/dns/delete/{domain}/{id} \
@@ -2306,11 +2489,14 @@ Response fields (BasicResponse):
 
 Delete all DNS records matching the given subdomain and type. SOA and NS records cannot be deleted with this method (use delete by ID instead).
 
+**Key permission needed:** `dns`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
 | `type` | path | yes |  |
 | `subdomain` | path | no | Subdomain portion only. Omit or leave empty for root domain records. |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/dns/deleteByNameType/{domain}/{type}/{subdomain} \
@@ -2338,6 +2524,8 @@ Every filter is optional; with none you get the first page of the whole list plu
 **`age` and `registrationDate` are on every row and both are sortable.** On the website the inventory is paginated by price tier and registration date is not shown, so finding aged names means walking several tier pages and then doing a WHOIS lookup per candidate. `sortName=registrationDate&sortDirection=asc` returns the oldest registrations first in one call.
 
 `price` is the closeout price alone. The binding total adds the renewal or transfer year you are also buying, and comes from `/closeout/get/{domain}` — it cannot be derived from search results, because a domain already at Porkbun is renewed while anything else is transferred in, and those are priced differently.
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -2372,6 +2560,8 @@ A single closeout plus `totalPrice` — the closeout price plus the registration
 
 `localDomain` tells you which side of the pricing you are on: true means the name is already at Porkbun and is renewed, false means it is transferred in. `available` is false once somebody has claimed it.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
@@ -2398,9 +2588,12 @@ Not available with a sandbox key (`SANDBOX_UNSUPPORTED`): the inventory provider
 
 Eligibility is the same as registering a domain, plus verified email and phone. There is no account-age or prior-order requirement — a first-time customer can buy a closeout, which matters because listings are first-come and often gone within minutes. An account that support has blocked from auctions and closeouts (past-due invoices, or an auction terms violation) returns `CLOSEOUT_NOT_ELIGIBLE`, which is not retryable.
 
+**Key permission needed:** `purchase`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -2451,6 +2644,8 @@ Read `blockers` first -- those will break something. `warnings` will not break o
 | `nameservers-ours` | warning | the domain is delegated to nameservers we do not operate, or to a mix of ours and someone else's -- so the zone you are inspecting is not what the world resolves. Writes to it keep succeeding and change nothing visible. |
 | `cloudflare-zone` | info | the zone is served through Cloudflare, which can lag briefly after a delegation change. |
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
@@ -2479,6 +2674,8 @@ Every version of a zone we still hold, newest first.
 Restore points are taken automatically: before the **first** write to a zone in each hour (so a session of edits costs one point, not one per record), before any bulk import or zone wipe, and before any restore. `recordCount` is the size of the zone **as it was at that moment**, not now.
 
 `matchesLive` tells you which point the zone currently sits on without diffing each one. Up to 50 are returned.
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -2511,6 +2708,8 @@ What changed between a restore point and the zone as it stands now.
 Records are compared on **name, type, content and priority**, not on id: an id means nothing across a delete and re-create, and what anyone means by "the same record" is the data. SOA and NS are excluded from both lists because they are the zone's own scaffolding.
 
 For masked records (parking, `ALIAS`, `HTTPS`) the value shown is the one you configured, not the internal host it resolves to.
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -2548,9 +2747,12 @@ Put a zone back to a restore point.
 
 Supports `dryRun: true`, which reports exactly what would be added and removed and changes nothing.
 
+**Key permission needed:** `dns`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -2589,6 +2791,8 @@ The scan probes a wide list of well-known names (apex, common subdomains, MX, DK
 
 Metered separately at 20 calls per hour per account, because each call is roughly 90 DNS lookups.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
@@ -2614,9 +2818,12 @@ Send `records` to import an exact list — the better path when the old registra
 
 Imported records do nothing until the domain actually points at the Porkbun nameservers — check `/domain/getNs/{domain}` and set them with `/domain/updateNs/{domain}`. Maximum 500 records per call. Supports `dryRun`.
 
+**Key permission needed:** `dns`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -2642,9 +2849,12 @@ Response fields:
 
 Retrieve DNSSEC records associated with the domain at the registry. Supports both GET (with header auth) and POST (with body or header auth).
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/dns/getDnssecRecords/{domain} \
@@ -2664,6 +2874,8 @@ Response fields:
 **Get DNSSEC records**
 
 Retrieve DNSSEC records associated with the domain at the registry. Supports both GET (with header auth) and POST (with body or header auth).
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -2693,9 +2905,12 @@ Create a DNSSEC DS or key record at the registry. DNSSEC requirements vary by re
 
 Algorithm and digest type are validated against the registry's own policy before the request is sent. Registries are retiring the values deprecated by RFC 9904/9905/9906 on different schedules, so what is accepted depends on the TLD: a value one registry has already dropped may still be accepted by another. A value the registry no longer accepts returns `DNSSEC_ALGORITHM_DEPRECATED`; one that still works but is being retired returns `status: SUCCESS` with a `warnings` array. Use algorithm 8 (RSA/SHA-256) or 13 (ECDSA/SHA-256) with digest type 2 (SHA-256) to be accepted everywhere. Existing DNSSEC records keep resolving regardless, and can always be deleted.
 
+**Key permission needed:** `domains`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -2732,10 +2947,13 @@ Response fields:
 
 Delete a DNSSEC record from the registry by key tag. Note: most registries delete all records matching the key data, not only the record with the specified key tag.
 
+**Key permission needed:** `domains`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
 | `keytag` | path | yes | The DNSSEC key tag value |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/dns/deleteDnssecRecord/{domain}/{keytag} \
@@ -2759,6 +2977,8 @@ Response fields (BasicResponse):
 **Applies to:** Both products.
 
 List the hosting plans that can be provisioned via the API, with price, interval, trial length, and features. Pass a row's `plan` to `/hosting/create` and its `price` (cents) as `acknowledgedCost`. Currently Secure Static Hosting; more products are added over time. Also available via POST. Includes both Secure Static Hosting and Cloud for WordPress (managed WordPress) plans; the `product` field distinguishes them.
+
+**Key permission needed:** `read`
 
 ```bash
 curl https://api.porkbun.com/api/json/v3/hosting/plans \
@@ -2784,9 +3004,12 @@ Provision hosting (Secure Static Hosting or Cloud for WordPress) for a domain in
 
 **Rate limit:** 10 provisions per account per hour (`dryRun` calls are free).
 
+**Key permission needed:** `purchase`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -2826,6 +3049,8 @@ Response fields:
 
 Return the Secure Static Hosting status for a domain (plan, server, trial, expiry, auto-renew), or `hosting: null` if none. Also available via POST.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
@@ -2850,9 +3075,12 @@ Response fields:
 
 Upload static files to the domain's Secure Static Hosting space. Send `files` as an array of `{ path, content }` where `content` is base64. Total payload ≤ 10 MB per request (split larger sites across calls). Only static-web file types are accepted (html/css/js/images/fonts/…); server-executable types are rejected. Hosting must be ACTIVE. A file’s `path` may include directories (e.g. `assets/css/style.css`); any missing parent directories are created automatically. Paths are sanitized (no traversal/control chars) and the filename extension must be an allowed static-web type.
 
+**Key permission needed:** `hosting`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -2882,6 +3110,8 @@ Response fields:
 
 List file/directory names under an optional `path` in the domain's hosting space. Also available via POST (send `path` in the body).
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
@@ -2902,9 +3132,12 @@ Response fields:
 
 Delete a file or directory at `path` in the domain's hosting space. Idempotent: a path that is already gone returns `SUCCESS` with `alreadyAbsent: true`. A directory that still has files returns `HOSTING_DIR_NOT_EMPTY` with its `contents`, unless `recursive: true` is sent, which deletes it with everything inside (the site root can never be deleted).
 
+**Key permission needed:** `hosting`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -2928,9 +3161,12 @@ Response fields:
 
 Deprovision (cancel) Secure Static Hosting for a domain; teardown is scheduled and completed by Porkbun. Note: the domain has already used its one free trial, so provisioning it again later will be charged (no second free trial).
 
+**Key permission needed:** `hosting`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Response fields (BasicResponse):
 
@@ -2947,9 +3183,12 @@ Response fields (BasicResponse):
 
 Retrieve the Let's Encrypt SSL certificate bundle for a domain. The certificate must already be issued (status HAVECERT). Token-based access is not supported for this endpoint. Supports both GET (with header auth) and POST (with body or header auth).
 
+**Key permission needed:** `domains`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/ssl/retrieve/{domain} \
@@ -2971,6 +3210,8 @@ Response fields:
 **Retrieve SSL bundle**
 
 Retrieve the Let's Encrypt SSL certificate bundle for a domain. The certificate must already be issued (status HAVECERT). Token-based access is not supported for this endpoint. Supports both GET (with header auth) and POST (with body or header auth).
+
+**Key permission needed:** `domains`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -2994,11 +3235,337 @@ Response fields:
 | `privatekey` | string | The PEM-encoded private key |
 | `publickey` | string | The PEM-encoded public key |
 
+## POST /api/json/v3/email/getForwards/{domain}
+
+**List email forwards**
+
+The email forwards on a domain: each `address` at the domain and the `forwardTo` mailbox it is delivered to (an address can forward to several). `limits` gives how many the domain has and may have; `dnsConfigured` says whether the apex MX records in the Porkbun zone point at Porkbun forwarding (if the domain uses other nameservers, those decide). Supports GET with header auth.
+
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+```bash
+curl -X POST https://api.porkbun.com/api/json/v3/email/getForwards/example.com \
+  -H 'Content-Type: application/json' \
+  -d '{"apikey":"pk1_...","secretapikey":"sk1_..."}'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `forwards` | object[] |  |
+| `limits` | object | Forwards the domain has (`used`, including any Porkbun manages itself) and may have (`max`) |
+| `dnsConfigured` | boolean |  |
+
+## GET /api/json/v3/email/getForwards/{domain}
+
+**List email forwards**
+
+The email forwards on a domain: each `address` at the domain and the `forwardTo` mailbox it is delivered to (an address can forward to several). `limits` gives how many the domain has and may have; `dnsConfigured` says whether the apex MX records in the Porkbun zone point at Porkbun forwarding (if the domain uses other nameservers, those decide). Supports GET with header auth.
+
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+
+```bash
+curl -X POST https://api.porkbun.com/api/json/v3/email/getForwards/example.com \
+  -H 'Content-Type: application/json' \
+  -d '{"apikey":"pk1_...","secretapikey":"sk1_..."}'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `forwards` | object[] |  |
+| `limits` | object | Forwards the domain has (`used`, including any Porkbun manages itself) and may have (`max`) |
+| `dnsConfigured` | boolean |  |
+
+## POST /api/json/v3/email/addForward/{domain}
+
+**Add an email forward**
+
+Forward an address at the domain to another mailbox. Free, up to the domain's limit (20 by default). Forwarding needs Porkbun's MX records and SPF include at the zone apex, and this sets them up. **When that would delete other apex MX records (another mail service) or rewrite an existing SPF record, the call is refused with `DNS_CHANGE_CONFIRMATION_REQUIRED` and `dnsChanges` describing exactly what would change; tell the user, then resend with `confirmDnsChanges: true`.** `dryRun: true` previews it, including whether confirmation is needed. Catch-all/wildcard forwards are not supported. An address cannot be both a forward and an email hosting mailbox.
+
+**Key permission needed:** `email`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `address` | string | yes | The address at the domain to forward: the part before the @ (`info`) or the whole address (`info@example.com`) |
+| `forwardTo` | string | yes | The mailbox to deliver to |
+| `confirmDnsChanges` | boolean | no | Agree to the DNS changes a DNS_CHANGE_CONFIRMATION_REQUIRED response described |
+| `dryRun` | boolean | no |  |
+
+```bash
+curl -X POST https://api.porkbun.com/api/json/v3/email/addForward/example.com \
+  -H 'Content-Type: application/json' \
+  -d '{"apikey":"pk1_...","secretapikey":"sk1_...","address":"info","forwardTo":"me@example.net"}'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `address` | string |  |
+| `forwardTo` | string |  |
+| `dnsChanges` | object | What setting up forwarding does to the zone apex |
+| `limits` | object | Forwards the domain has (`used`, including any Porkbun manages itself) and may have (`max`) |
+
+## POST /api/json/v3/email/deleteForward/{domain}
+
+**Delete an email forward**
+
+Delete one forward, named by its `address` and `forwardTo` (an address can forward to several). When it was the domain's last forward and there are no email hosting mailboxes, Porkbun's forwarding MX and SPF records are removed too (`dnsRecordsRemoved: true`).
+
+**Key permission needed:** `email`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `address` | string | yes |  |
+| `forwardTo` | string | yes |  |
+
+```bash
+curl -X POST https://api.porkbun.com/api/json/v3/email/deleteForward/example.com \
+  -H 'Content-Type: application/json' \
+  -d '{"apikey":"pk1_...","secretapikey":"sk1_...","address":"info","forwardTo":"me@example.net"}'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `address` | string |  |
+| `forwardTo` | string |  |
+| `dnsRecordsRemoved` | boolean |  |
+
+## POST /api/json/v3/email/getMailboxes/{domain}
+
+**List mailboxes**
+
+The domain's email hosting mailboxes, including ones bought or included as a trial that are still waiting to be set up (`status: PENDINGSETUP`, `address: null`). Also returns the price of another mailbox and the mail client settings. Supports GET with header auth.
+
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+```bash
+curl -X POST https://api.porkbun.com/api/json/v3/email/getMailboxes/example.com \
+  -H 'Content-Type: application/json' \
+  -d '{"apikey":"pk1_...","secretapikey":"sk1_..."}'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `mailboxes` | object[] |  |
+| `price` | object |  |
+| `clientSettings` | object | Mail client settings: IMAP imap.porkbun.com:993 SSL/TLS, POP pop.porkbun.com:995, SMTP smtp.porkbun.com:587 STARTTLS (or 465 implicit TLS, 50587), webmail https://webmail.porkbun.com; the username is the full address |
+
+## GET /api/json/v3/email/getMailboxes/{domain}
+
+**List mailboxes**
+
+The domain's email hosting mailboxes, including ones bought or included as a trial that are still waiting to be set up (`status: PENDINGSETUP`, `address: null`). Also returns the price of another mailbox and the mail client settings. Supports GET with header auth.
+
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+
+```bash
+curl -X POST https://api.porkbun.com/api/json/v3/email/getMailboxes/example.com \
+  -H 'Content-Type: application/json' \
+  -d '{"apikey":"pk1_...","secretapikey":"sk1_..."}'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `mailboxes` | object[] |  |
+| `price` | object |  |
+| `clientSettings` | object | Mail client settings: IMAP imap.porkbun.com:993 SSL/TLS, POP pop.porkbun.com:995, SMTP smtp.porkbun.com:587 STARTTLS (or 465 implicit TLS, 50587), webmail https://webmail.porkbun.com; the username is the full address |
+
+## POST /api/json/v3/email/setupMailbox/{domain}
+
+**Set up a waiting mailbox**
+
+Give a mailbox that is already paid for, or the free trial mailbox that comes with a domain registration, its address and password. Free. `mailboxId` picks one; without it the first waiting mailbox is used (`NO_PENDING_MAILBOX` if there is none: buy one with /email/createMailbox). Without `password`, a strong one is generated and returned once in `password`. Puts Porkbun's MX and SPF in place, asking first (`DNS_CHANGE_CONFIRMATION_REQUIRED`) if that would replace another mail service's MX or rewrite the SPF record. Needs a verified email, and a verified phone or an approved ID check. DKIM and DMARC are set up on the website.
+
+**Key permission needed:** `email`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `address` | string | yes | The part before the @ (`me`) or the whole address. 1-30 characters: letters, digits and + . - _ |
+| `password` | string | no | Optional. 12-72 bytes with an upper case letter, a lower case letter, a number and a special character. Leave out to have a strong one generated and returned once |
+| `confirmDnsChanges` | boolean | no | Agree to DNS changes a DNS_CHANGE_CONFIRMATION_REQUIRED response described |
+| `dryRun` | boolean | no |  |
+| `mailboxId` | integer | no | Which waiting mailbox (from /email/getMailboxes) |
+
+```bash
+curl -X POST https://api.porkbun.com/api/json/v3/email/setupMailbox/example.com \
+  -H 'Content-Type: application/json' \
+  -d '{"apikey":"pk1_...","secretapikey":"sk1_...","address":"me"}'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `mailbox` | object |  |
+| `password` | string | Only when the password was generated (no `password` in the request). Shown once; give it to the user |
+| `passwordGenerated` | boolean |  |
+| `dnsChanges` | object | Same shape as /email/addForward's dnsChanges: mxRecordsRemoved and spf |
+| `clientSettings` | object | Mail client settings: IMAP imap.porkbun.com:993 SSL/TLS, POP pop.porkbun.com:995, SMTP smtp.porkbun.com:587 STARTTLS (or 465 implicit TLS, 50587), webmail https://webmail.porkbun.com; the username is the full address |
+| `orderId` | integer | createMailbox only |
+| `charged` | integer | createMailbox only, cents |
+| `message` | string |  |
+
+## POST /api/json/v3/email/createMailbox/{domain}
+
+**Buy and set up a mailbox**
+
+Buy one email hosting mailbox ($36.00 a year, renewing automatically; the current price is in /email/getMailboxes) and set it up in the same call. `cost` must equal the price in cents (`COST_MISMATCH` names it; `dryRun: true` with `cost: 0` quotes it). Paid from account credit by default, or directly with `payWith: "card"` / `"usdc"` as for domain purchases; counts toward the monthly API spend limit. Everything else is as /email/setupMailbox: generated password unless one is sent, DNS confirmation, verification. Accounts under 90 days old that have paid in crypto cannot buy it (`EMAIL_HOSTING_UNAVAILABLE`), as on the website. If the purchase succeeds but setup fails, the response says `setupComplete: false` with the `mailboxId` to finish with /email/setupMailbox.
+
+**Key permission needed:** `purchase`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `address` | string | yes | The part before the @ (`me`) or the whole address. 1-30 characters: letters, digits and + . - _ |
+| `password` | string | no | Optional. 12-72 bytes with an upper case letter, a lower case letter, a number and a special character. Leave out to have a strong one generated and returned once |
+| `confirmDnsChanges` | boolean | no | Agree to DNS changes a DNS_CHANGE_CONFIRMATION_REQUIRED response described |
+| `dryRun` | boolean | no |  |
+| `cost` | integer | yes | The price in cents, 3600 |
+| `agreeToTerms` | string | yes |  |
+| `payWith` | string | no | Pay directly instead of from account credit; see /domain/create |
+| `cardPaymentId` | string | no |  |
+| `usdcCheckoutId` | string | no |  |
+
+```bash
+curl -X POST https://api.porkbun.com/api/json/v3/email/createMailbox/example.com \
+  -H 'Content-Type: application/json' \
+  -d '{"apikey":"pk1_...","secretapikey":"sk1_...","address":"me","cost":3600,"agreeToTerms":"yes"}'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `mailbox` | object |  |
+| `password` | string | Only when the password was generated (no `password` in the request). Shown once; give it to the user |
+| `passwordGenerated` | boolean |  |
+| `dnsChanges` | object | Same shape as /email/addForward's dnsChanges: mxRecordsRemoved and spf |
+| `clientSettings` | object | Mail client settings: IMAP imap.porkbun.com:993 SSL/TLS, POP pop.porkbun.com:995, SMTP smtp.porkbun.com:587 STARTTLS (or 465 implicit TLS, 50587), webmail https://webmail.porkbun.com; the username is the full address |
+| `orderId` | integer | createMailbox only |
+| `charged` | integer | createMailbox only, cents |
+| `message` | string |  |
+
+## POST /api/json/v3/email/renewMailbox/{domain}
+
+**Renew a mailbox for a year**
+
+Add a year to a mailbox now, at its renewal price (`renewalPrice` in /email/getMailboxes; $36.00, or the legacy price for mailboxes that still qualify). A set-up mailbox also renews on its own when it is due (`autoRenews`), charged like any other renewal; this is for paying early, or for converting a trial to paid. Name the mailbox with `mailboxId` or `address`. `cost` must equal the price (`dryRun: true` with `cost: 0` quotes it and returns `expiresAfter`). Paid from account credit or with `payWith: "card"` / `"usdc"`, within the monthly API spend limit. The year is added to the current expiry date.
+
+**Key permission needed:** `purchase`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `mailboxId` | integer | no |  |
+| `address` | string | no | The mailbox address, or the part before the @ |
+| `cost` | integer | yes |  |
+| `agreeToTerms` | string | yes |  |
+| `payWith` | string | no |  |
+| `cardPaymentId` | string | no |  |
+| `usdcCheckoutId` | string | no |  |
+| `dryRun` | boolean | no |  |
+
+```bash
+curl -X POST https://api.porkbun.com/api/json/v3/email/renewMailbox/example.com \
+  -H 'Content-Type: application/json' \
+  -d '{"apikey":"pk1_...","secretapikey":"sk1_...","address":"me","cost":3600,"agreeToTerms":"yes"}'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `mailbox` | object |  |
+| `orderId` | integer |  |
+| `charged` | integer |  |
+| `message` | string |  |
+
 ## POST /api/json/v3/email/setPassword
 
 **Set email hosting password**
 
 Set the password for an email hosting account associated with a domain managed by your API key.
+
+**Key permission needed:** `email`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -3029,6 +3596,8 @@ Response fields (BasicResponse):
 GET form of `/marketplace/getAll` for read-friendly filtering and URL-shareable searches. Authenticate via `X-API-Key` and `X-Secret-API-Key` headers, or `Authorization: Bearer <token>`. All filter params are optional and mirror the POST body. For multi-value `tlds`, use bracket syntax: `?tlds[]=com&tlds[]=io`.
 
 See the POST documentation for the full filtering semantics (unfiltered pagination vs filtered mode, `+include` / `-exclude` query prefixes, sort options).
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -3070,6 +3639,12 @@ Retrieve domains listed on the Porkbun marketplace. Two modes:
 
 `query` supports `+include` and `-exclude` prefixes per word against the SLD (e.g. `+ai -test` matches SLDs containing 'ai' but not 'test'). Token-based access is not supported.
 
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
 Request body fields:
 
 | Field | Type | Required | Description |
@@ -3104,9 +3679,12 @@ Response fields:
 
 **Partner-only endpoint** (requires `auth:login` access on the API key). Authenticate a Porkbun account with username and password and receive a short-lived token (5 minutes). Supports TOTP and email-based 2FA. Returns HTTP 403 with a `2FA` field when a second factor is required.
 
+**Key permission needed:** `account`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `Sig` | header | yes | Base64-encoded SHA-256 digest of the trimmed request body, signed with the private key associated with the API key. |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -3140,6 +3718,8 @@ Auto top-up is how unattended work stops dead-ending on `INSUFFICIENT_FUNDS`: wh
 
 If `paymentMethodOnFile` is false the settings are inert and the response says so in `warnings` — a card can only be saved on the website, never over the API.
 
+**Key permission needed:** `funding`
+
 Response fields (AutoTopupResponse):
 
 | Field | Type | Description |
@@ -3171,6 +3751,12 @@ Set the top-up amount, and/or switch auto top-up on or off.
 **`amount` set over the API is capped at $500** ($5 minimum), because that value is also what `POST /account/topup` charges — an API key free to set it to anything would be setting its own limit, which is not a limit. A larger amount set by the account holder at porkbun.com/account/api is honoured as-is.
 
 No card is touched here, and one cannot be added over the API. Supports `dryRun`.
+
+**Key permission needed:** `funding`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -3213,6 +3799,12 @@ Errors that matter: `NO_PAYMENT_METHOD` (nothing saved to charge — the account
 
 With a sandbox key this grants simulated credit and charges nothing (`simulated: true`). Supports `dryRun`, which previews the amount and charges nothing in any environment. Honours `Idempotency-Key`.
 
+**Key permission needed:** `funding`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
 Request body fields:
 
 | Field | Type | Required | Description |
@@ -3248,6 +3840,12 @@ Optionally supply a `returnUrl` (must be HTTPS) to redirect the user back to you
 
 After sending the invite URL, poll `/account/inviteStatus` to check whether the account was created.
 
+**Key permission needed:** `account`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
 Request body fields:
 
 | Field | Type | Required | Description |
@@ -3282,6 +3880,8 @@ Returns the current status of a registration invite created by your API key.
 
 You can only query invites created by your own API key. Pass credentials via `X-API-Key` and `X-Secret-API-Key` headers.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `token` | query | yes | The `inviteToken` returned by `/account/invite` |
@@ -3308,6 +3908,8 @@ Response fields:
 
 Returns the available account credit balance. Authenticate using `X-API-Key` and `X-Secret-API-Key` headers, or `Authorization: Bearer <token>`.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
@@ -3333,6 +3935,8 @@ Response fields (BalanceResponse):
 **List invoices**
 
 The account's invoices (one per order), newest first, like the orders page on porkbun.com. `total_cents` is what the customer was left paying: refunds are netted out, and `state` says whether the invoice is paid, refunded or partially refunded. Any of the account's API keys can read them.
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -3366,6 +3970,8 @@ Response fields:
 
 One invoice as data: bill-to details, payment method (card brand and last four only), each line with its term and resulting domain expiry, and gross, refunded and net totals. The same figures as the PDF.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
@@ -3391,6 +3997,8 @@ Response fields:
 **Download an invoice PDF**
 
 The invoice as a PDF, base64-encoded in `contentBase64`: the same document as Download PDF on porkbun.com. Decode it and save it as `filename`.
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -3428,11 +4036,14 @@ Opens a Coinbase checkout to add account credit with USDC on Base, the same as U
 
 Credit is added when the payment confirms (usually within a minute), less Coinbase's fee of about 1% (`estimatedFee_cents`, `estimatedCredit_cents`). To cover an `INSUFFICIENT_FUNDS` shortfall exactly, open the checkout for its `usdcAmountToCover`. Check `GET /account/topupCryptoStatus/{checkoutId}`. Payments are on-chain and cannot be reversed. Needs a verified email and phone and an account that is not bank-transfer-only (`CRYPTO_NOT_AVAILABLE` otherwise). Up to 10 checkouts per account per day. USDC counts toward the same monthly ceiling as card and MPP top-ups (the monthly spend limit, or $100 when none is set), checked when the checkout is opened, with unpaid checkouts from the last day counted as if paid (`TOPUP_LIMIT_EXCEEDED`). Not available on sandbox keys (`SANDBOX_UNSUPPORTED`; use `/sandbox/topup`).
 
+**Key permission needed:** `funding`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
 | `X-API-Key` | header | no | API key header auth (use with X-Secret-API-Key) |
 | `X-Secret-API-Key` | header | no | Secret API key header auth (use with X-API-Key) |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -3463,6 +4074,8 @@ Response fields:
 
 Whether a checkout from `POST /account/topupCrypto` has been paid and credited. `state`: ACTIVE (not paid), PROCESSING (paid, being credited), COMPLETED (credited), EXPIRED or FAILED. Returns the current balance too.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
@@ -3489,11 +4102,14 @@ Purchases and top-ups need a verified email address and phone number, and accoun
 
 One live code at a time: a second request within 10 minutes returns `codeAlreadySent` instead of texting again (send `"channel": "call"` if the text never arrived). Up to 5 sends a day (`PHONE_VERIFY_LIMIT`). Numbers in countries where the website requires a CAPTCHA for phone verification, or accounts with no phone number, get `PHONE_VERIFY_UNAVAILABLE` and verify on the website. Already verified: `alreadyVerified: true`. Not available on sandbox keys.
 
+**Key permission needed:** `account`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
 | `X-API-Key` | header | no | API key header auth (use with X-Secret-API-Key) |
 | `X-Secret-API-Key` | header | no | Secret API key header auth (use with X-API-Key) |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -3522,11 +4138,14 @@ Response fields:
 
 Marks the account's phone number verified with the code from `POST /account/verifyPhone/send`. A wrong or expired code returns `PHONE_CODE_INVALID`; 10 wrong codes in an hour lock it for the hour (`PHONE_VERIFY_LIMIT`). The response says whether the email address is verified too, since purchases need both; the email is verified by the link in the verification email.
 
+**Key permission needed:** `account`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
 | `X-API-Key` | header | no | API key header auth (use with X-Secret-API-Key) |
 | `X-Secret-API-Key` | header | no | Secret API key header auth (use with X-API-Key) |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -3554,11 +4173,14 @@ The agent's MPP client requests `payUrl` (POST) and gets HTTP `402` with a `WWW-
 
 Same limits as card top-ups (`POST /account/topup`): $5-$500, the monthly ceiling, 5 a day and 20 a month (`TOPUP_LIMIT_EXCEEDED`). Not available on sandbox keys (`SANDBOX_UNSUPPORTED`).
 
+**Key permission needed:** `funding`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
 | `X-API-Key` | header | no | API key header auth (use with X-Secret-API-Key) |
 | `X-Secret-API-Key` | header | no | Secret API key header auth (use with X-API-Key) |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -3584,6 +4206,8 @@ Response fields:
 **Get API spend settings**
 
 Returns the account's API spend control settings, this month's spend, and the limits actually enforced: `spendLimit` on purchases and `topupLimit` on credit added over the API. The account holder sets the limit on the website (https://porkbun.com/account/api); it cannot be changed over the API. All amounts are in cents. Authenticate using `X-API-Key` and `X-Secret-API-Key` headers, or `Authorization: Bearer <token>`.
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -3613,6 +4237,8 @@ Response fields (ApiSettingsResponse):
 
 Return the catalog of event types a webhook endpoint can subscribe to. Read-only; supports GET (header auth) or POST (body or header auth).
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
@@ -3638,6 +4264,8 @@ Response fields (WebhookEventTypesResponse):
 
 List all webhook endpoints registered on the authenticated account, including each endpoint's signing secret and delivery health. Read-only; supports GET (header auth) or POST (body or header auth).
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
@@ -3662,6 +4290,8 @@ Response fields (WebhookListResponse):
 **Get a webhook endpoint**
 
 Fetch a single webhook endpoint by id, including its signing secret and delivery health. Read-only; supports GET (header auth) or POST (body or header auth).
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -3689,6 +4319,12 @@ Response fields (WebhookEndpointResponse):
 
 Register an HTTPS endpoint to receive signed event payloads. The response includes the generated `secret` — store it securely; it is the HMAC key used to verify the `X-Porkbun-Signature` header. Omit `events` (or pass `["*"]`) to subscribe to all event types. Maximum 20 endpoints per account. **URL requirements:** the endpoint must be an `https://` URL on the standard port 443, with a hostname that resolves to a public internet address. Private, loopback, link-local, CGNAT and other reserved ranges are refused (`INVALID_WEBHOOK_URL`) because Porkbun delivers from inside its own network. Credentials in the URL (`https://user:pass@host`) are also refused — authenticate the receiver by verifying the `X-Porkbun-Signature` HMAC instead. A hostname that does not resolve yet is accepted, so you can register the endpoint before the receiver is deployed, but delivery is re-checked against these rules immediately before each request.
 
+**Key permission needed:** `account`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
 Request body fields:
 
 | Field | Type | Required | Description |
@@ -3714,6 +4350,12 @@ Response fields (WebhookEndpointResponse):
 **Update a webhook endpoint**
 
 Update an endpoint's URL, event subscriptions, and/or status. Only the supplied fields change. Set `status` to `DISABLED` to pause deliveries or `ACTIVE` to resume (resuming also resets the consecutive-failure counter). **URL requirements:** the endpoint must be an `https://` URL on the standard port 443, with a hostname that resolves to a public internet address. Private, loopback, link-local, CGNAT and other reserved ranges are refused (`INVALID_WEBHOOK_URL`) because Porkbun delivers from inside its own network. Credentials in the URL (`https://user:pass@host`) are also refused — authenticate the receiver by verifying the `X-Porkbun-Signature` HMAC instead. A hostname that does not resolve yet is accepted, so you can register the endpoint before the receiver is deployed, but delivery is re-checked against these rules immediately before each request.
+
+**Key permission needed:** `account`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -3743,6 +4385,12 @@ Response fields (WebhookEndpointResponse):
 
 Generate a new signing secret for an endpoint and return the endpoint with the new secret. Deliveries are signed with the new secret immediately, so update your verifier as part of the same operation.
 
+**Key permission needed:** `account`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
 Request body fields:
 
 | Field | Type | Required | Description |
@@ -3767,6 +4415,12 @@ Response fields (WebhookEndpointResponse):
 **Send a test event**
 
 Enqueue a `webhook.test` event to the endpoint so you can confirm reachability and that your signature verification works. The endpoint must be ACTIVE. Delivery is asynchronous (usually within a minute).
+
+**Key permission needed:** `account`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -3794,6 +4448,12 @@ Response fields (WebhookTestResponse):
 
 Delete a webhook endpoint by id. Deliveries stop immediately.
 
+**Key permission needed:** `account`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
 Request body fields:
 
 | Field | Type | Required | Description |
@@ -3818,6 +4478,8 @@ Response fields:
 **List webhook deliveries**
 
 List recent delivery attempts across the account (newest first), optionally filtered by endpoint or status. The bulky payload is omitted — use GET /webhook/delivery/{id} for it. History is retained about 30 days. Read-only; supports GET (header auth) or POST (body or header auth).
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -3852,6 +4514,8 @@ Response fields (WebhookDeliveryListResponse):
 
 Fetch a single delivery including the full event payload that was (or will be) sent and its delivery status. Read-only; supports GET (header auth) or POST (body or header auth).
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `id` | path | yes |  |
@@ -3878,6 +4542,12 @@ Response fields (WebhookDeliveryResponse):
 
 Re-queue a past delivery to its endpoint. Clones it into a fresh attempt reusing the ORIGINAL event id (so consumers that dedupe on X-Porkbun-Webhook-Id treat it as the same event). The endpoint must still exist and be ACTIVE. The original delivery row is left intact as history.
 
+**Key permission needed:** `account`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
 Request body fields:
 
 | Field | Type | Required | Description |
@@ -3903,6 +4573,8 @@ Response fields (WebhookResendResponse):
 **Get TLD registration requirements (JSON Schema)**
 
 Machine-readable registration requirements for a TLD. Returns whether the TLD is registerable via the API (`apiRegisterable`), the `/domain/create` request body as a JSON Schema, the fixed registration term, WHOIS-privacy/validated-address/registrant-only flags, and — for TLDs with registry eligibility rules (e.g. .us nexus, .ca legal type) — a second JSON Schema (`registryRequirements`) enumerating those fields with allowed values and labels. Call this before /domain/create to know upfront whether and how a TLD can be registered. Read-only; GET (header auth) or POST (body or header auth).
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -3941,9 +4613,12 @@ Response fields:
 
 Create a directory (and any missing parent directories) at `path` in the domain’s hosting space. Deploy already auto-creates directories in a file’s path, so use this to stand up an empty directory explicitly. Path is sanitized segment-by-segment (no traversal / control chars).
 
+**Key permission needed:** `hosting`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -3963,6 +4638,12 @@ Response fields:
 **Sandbox: add fake credit**
 
 Sandbox only (requires a `pk1_sb_` key). Grants fake account credit so paid operations can keep being exercised after funds run out. Optional `amount` in US cents (default 100000 = $1000, capped 1,000,000).
+
+**Key permission needed:** `account`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -3986,6 +4667,12 @@ Response fields:
 
 Sandbox only (requires a `pk1_sb_` key). Wipes the sandbox account's simulated state (domains, DNS, orders, credit) and re-grants $1000 fake credit.
 
+**Key permission needed:** `account`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
 Response fields:
 
 | Field | Type | Description |
@@ -4001,6 +4688,12 @@ Response fields:
 **Sandbox: fire a sample webhook event**
 
 Sandbox only (requires a `pk1_sb_` key). Enqueues a signed sample webhook event to your registered endpoints so you can test your handler and signature verification for any event type on demand — including cron-driven events like `domain.expiring` that don't result from a single API call. Register an endpoint first with `POST /webhook/create`.
+
+**Key permission needed:** `account`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -4026,6 +4719,8 @@ Response fields:
 
 Credential-free. Returns a directory of every endpoint that can be mocked, each with a ready-to-call mock URL.
 
+**Key permission needed:** `read`
+
 Response fields:
 
 | Field | Type | Description |
@@ -4040,6 +4735,8 @@ Response fields:
 **Mock server: example response for an endpoint**
 
 Credential-free. Mirror any real endpoint path after `/mock` (e.g. `/mock/domain/listAll`, `/mock/dns/create/example.com`) to get a schema-accurate example success response. Append `?status=error` for the error-response shape. Touches no datastore; signalled by the `X-Porkbun-Mock: true` header.
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -4062,9 +4759,12 @@ Free **preview** sites (the $0 parked plan) are excluded — they return `PREVIE
 
 **Rate limit:** 20 mints per account per hour (`dryRun` calls are free).
 
+**Key permission needed:** `hosting`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -4093,6 +4793,8 @@ Lists the application passwords on the site (uuid, name, created, last used) so 
 
 Free preview sites are excluded (`PREVIEW_SITE_NOT_SUPPORTED`).
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
@@ -4116,9 +4818,12 @@ Revokes an application password by `uuid` (from `/hosting/getWpCredentials`), or
 
 Free preview sites are excluded (`PREVIEW_SITE_NOT_SUPPORTED`).
 
+**Key permission needed:** `hosting`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -4147,6 +4852,8 @@ Whether this account has an active Cloudflare grant, and which Cloudflare accoun
 
 Also available via POST.
 
+**Key permission needed:** `read`
+
 ## GET /api/json/v3/cloudflare/inventory
 
 **List every domain with its Cloudflare eligibility**
@@ -4154,6 +4861,8 @@ Also available via POST.
 Every domain in the account with a `state` (`eligible`, `warn`, `blocked`, `connected`, `inprogress`) and a human-readable `reason`.
 
 Read this **before** queueing to see what will be skipped and why. Works even with no Cloudflare connection yet, so an agent can plan while the owner is still authorizing. Also available via POST.
+
+**Key permission needed:** `read`
 
 ## POST /api/json/v3/cloudflare/connect
 
@@ -4174,6 +4883,12 @@ Supports `dryRun: true`, which returns the same per-domain verdicts without queu
 Requires an active Cloudflare connection (`CLOUDFLARE_NOT_CONNECTED` otherwise). Limits: 500 domains per call, 2000 domains per account per hour.
 
 After queueing, poll `/cloudflare/get/{domain}`: the row moves `queued` → `working` → `setup` → `activating` → `connected`. `setup` means Cloudflare has the zone but has not provisioned it yet, so the nameservers have deliberately not been touched. `activating` means the nameservers are already repointed and Cloudflare is confirming the zone, which can take a while as DNS propagates.
+
+**Key permission needed:** `domains`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -4203,6 +4918,8 @@ Every Cloudflare move this account has requested, with status and message. Queue
 
 Poll on a sensible interval (a few seconds early on, then back off) — a zone typically leaves `queued` within seconds but can sit in `setup` or `activating` while Cloudflare provisions the zone and DNS propagates.
 
+**Key permission needed:** `read`
+
 ## GET /api/json/v3/cloudflare/get/{domain}
 
 **Get the Cloudflare move status for one domain**
@@ -4224,6 +4941,8 @@ Status of a single domain's move, including the zone id once created and the nam
 
 Poll on a sensible interval (a few seconds early on, then back off) — a zone typically leaves `queued` within seconds but can sit in `setup` or `activating` while Cloudflare provisions the zone and DNS propagates.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
@@ -4234,9 +4953,12 @@ Poll on a sensible interval (a few seconds early on, then back off) — a zone t
 
 Put a domain that failed or was skipped back in the queue. Fails with `RETRY_FAILED` if it is already connected, already in progress, or no longer in the account. Supports `dryRun`.
 
+**Key permission needed:** `domains`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ## POST /api/json/v3/cloudflare/rollback/{domain}
 
@@ -4246,15 +4968,24 @@ Point the domain's nameservers back at Porkbun, restoring the DNS we still hold.
 
 The Cloudflare zone is deliberately left in place — deleting a zone in someone's own Cloudflare account is theirs to do. Fails with `ROLLBACK_FAILED` if we never moved the domain, it is already back on Porkbun nameservers, or it is being worked on right now. Supports `dryRun`.
 
+**Key permission needed:** `domains`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ## POST /api/json/v3/cloudflare/disconnect
 
 **Remove the stored Cloudflare connection**
 
 Revoke and forget this account's Cloudflare grant. Domains already moved stay on Cloudflare and keep resolving; this only stops us making further changes on the customer's behalf. Reconnecting requires the browser authorization again. Supports `dryRun`.
+
+**Key permission needed:** `domains`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 ## POST /api/json/v3/cloudflare/setProxy/{domain}
 
@@ -4270,9 +5001,12 @@ Proxying hides the origin IP, so if the zone's MX points at a hostname you are p
 
 Rate limit: 60 changes per account per hour (these calls go to Cloudflare under Porkbun's OAuth client).
 
+**Key permission needed:** `dns`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -4290,6 +5024,8 @@ The domain's DNS records **as Cloudflare currently holds them**, each with its `
 
 Once a domain has moved, this is the authoritative record set — `/dns/retrieve` reads the Porkbun zone, which is no longer the one answering queries. Requires the move to have finished (`ZONE_NOT_READY` otherwise). Also available via POST.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
@@ -4302,6 +5038,8 @@ Which DNS records we would create in Cloudflare for this domain, and which we wo
 
 Records are always created DNS-only (grey cloud); use `/cloudflare/setProxy` afterwards to turn the proxy on. Also available via POST.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
@@ -4313,6 +5051,8 @@ Records are always created DNS-only (grey cloud); use `/cloudflare/setProxy` aft
 What **Cloudflare** says about the zone right now — status, paused, its nameservers, activation date — as opposed to what our queue row remembers.
 
 These drift: if the nameservers are repointed elsewhere after the move, our row still reads `done` while Cloudflare has stopped answering for the domain. The response includes the live public nameservers and a `nameserversDrifted` boolean so you don't have to diff them. Also available via POST.
+
+**Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
 |---|---|---|---|
@@ -4328,6 +5068,8 @@ The important one is **`ssl`**: `flexible` means Cloudflare fetches your origin 
 
 If the account's Cloudflare authorization predates this feature it will not carry the `zone-settings.write` scope, and this returns `CLOUDFLARE_REAUTHORIZE_REQUIRED` with a `connectUrl`. Reconnecting is the same one-click browser flow and does not disturb domains already moved.
 
+**Key permission needed:** `read`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
@@ -4342,9 +5084,12 @@ Prefer `ssl: "full"`; `flexible` is an invisible downgrade for visitors. Support
 
 If the account's Cloudflare authorization predates this feature it will not carry the `zone-settings.write` scope, and this returns `CLOUDFLARE_REAUTHORIZE_REQUIRED` with a `connectUrl`. Reconnecting is the same one-click browser flow and does not disturb domains already moved.
 
+**Key permission needed:** `dns`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -4366,9 +5111,12 @@ Request body fields:
 
 `name` accepts `@` for the apex or a bare label. MX requires `priority`. `proxied` applies to A/AAAA/CNAME only. Supports `dryRun`.
 
+**Key permission needed:** `dns`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -4392,10 +5140,13 @@ Request body fields:
 
 Partial update: fields you omit keep their current value. The response carries both the new record and the `previous` one. Supports `dryRun`.
 
+**Key permission needed:** `dns`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
 | `recordId` | path | yes | Cloudflare record id from /cloudflare/getRecords. |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 
@@ -4419,10 +5170,13 @@ Request body fields:
 
 The record is read before deletion, so the response reports exactly what was removed and a bad id fails before anything is destroyed. Supports `dryRun`.
 
+**Key permission needed:** `dns`
+
 | Parameter | In | Required | Description |
 |---|---|---|---|
 | `domain` | path | yes |  |
 | `recordId` | path | yes | Cloudflare record id from /cloudflare/getRecords. |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
 
 Request body fields:
 

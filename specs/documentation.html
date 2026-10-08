@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Porkbun API Documentation — domains, DNS, SSL &amp; hosting for developers and AI agents</title>
-  <meta name="description" content="The Porkbun API (v3.56) is a developer- and agent-friendly REST API to register, renew, transfer and manage domains, DNS &amp; DNSSEC, SSL certificates, email forwarding, the marketplace, static and WordPress hosting, Cloudflare connect, and outbound webhooks — with machine-readable errors, idempotency keys, a full OpenAPI spec, an official MCP server, and an isolated sandbox.">
+  <meta name="description" content="The Porkbun API (v3.60) is a developer- and agent-friendly REST API to register, renew, transfer and manage domains, DNS &amp; DNSSEC, SSL certificates, email forwarding, the marketplace, static and WordPress hosting, Cloudflare connect, and outbound webhooks — with machine-readable errors, idempotency keys, a full OpenAPI spec, an official MCP server, and an isolated sandbox.">
   <link rel="canonical" href="https://porkbun.com/api/json/v3/documentation">
   <meta name="robots" content="index, follow">
   <!-- Open Graph / Twitter for shareable, SEO-friendly previews -->
@@ -27,7 +27,7 @@
     "name": "Porkbun API",
     "abstract": "REST API to register and manage domains, DNS, DNSSEC, SSL, email forwarding, marketplace, static hosting, and webhooks.",
     "url": "https://porkbun.com/api/json/v3/documentation",
-    "softwareVersion": "3.56",
+    "softwareVersion": "3.60",
     "provider": { "@type": "Organization", "name": "Porkbun, LLC", "url": "https://porkbun.com" },
     "programmingModel": "REST/JSON",
     "documentation": "https://porkbun.com/api/json/v3/spec"
@@ -104,7 +104,7 @@
   <header class="brand">
     <div class="wrap">
       <div class="logo"><img src="/images/porkbun.comphpPkl2eU.svg" alt="Porkbun">porkbun<span>API</span></div>
-      <div class="meta">v3.56<a href="/">porkbun.com</a></div>
+      <div class="meta">v3.60<a href="/">porkbun.com</a></div>
     </div>
   </header>
 
@@ -127,7 +127,7 @@
         <div class="card"><h3>Nameservers &amp; glue</h3><p>Read/replace nameservers and manage glue (host) records at the registry.</p></div>
         <div class="card"><h3>Domain contacts</h3><p>Read and edit registrant/admin/tech/billing contacts, with per-TLD validation.</p></div>
         <div class="card"><h3>URL forwarding</h3><p>Create and manage 301/302/masked URL forwards for a domain.</p></div>
-        <div class="card"><h3>Email forwarding</h3><p>Route mail on your domains to existing inboxes.</p></div>
+        <div class="card"><h3>Email</h3><p>Forward mail on your domains to existing inboxes, or set up real mailboxes. Guides: <a href="/llms/guides/set-up-email-forwarding">forwarding</a>, <a href="/llms/guides/set-up-a-mailbox">mailboxes</a>.</p></div>
         <div class="card"><h3>Marketplace</h3><p>Browse the Porkbun aftermarket with server-side filters.</p></div>
         <div class="card"><h3>Expired closeouts</h3><p>Search expired-domain closeouts and buy one outright. Filter by age, price, TLD and name length, and sort by <strong>registration date</strong> to find aged names in a single call.</p></div>
         <div class="card"><h3>Secure Static Hosting</h3><p>Provision hosting and deploy a static site end-to-end — no dashboard.</p></div>
@@ -151,7 +151,7 @@
         <div><strong>REST / JSON</strong><span>HTTPS only. Reads accept GET; writes are POST with a JSON body. Every response has a stable <code>status</code>.</span></div>
         <div><strong>Idempotency</strong><span>Send <code>Idempotency-Key</code> on any write; retries within 24h replay the original response — no double-charging.</span></div>
         <div><strong>Dry run</strong><span>Pass <code>dryRun: true</code> to rehearse a billable or destructive write (price, funds, eligibility) without performing it.</span></div>
-        <div><strong>Versioning</strong><span>Every response carries <code>X-API-Version</code> (currently 3.56). The path stays <code>/v3</code>; minor bumps are backward-compatible.</span></div>
+        <div><strong>Versioning</strong><span>Every response carries <code>X-API-Version</code> (currently 3.60). The path stays <code>/v3</code>; minor bumps are backward-compatible.</span></div>
         <div><strong>Request IDs</strong><span>An <code>X-Request-Id</code> header + <code>requestId</code> body field (UUIDv7) on every response for retries, logs, and support.</span></div>
       </div>
     </div>
@@ -164,7 +164,7 @@
       <div class="cols">
         <div><strong>Machine-readable errors</strong><span>Every error has a stable <code>code</code> plus a <code>next_action</code> object telling an agent how to recover (re-quote, add funds, enable a setting, …).</span></div>
         <div><strong>Registration requirements as JSON Schema</strong><span><code>GET /domain/getRegistrationRequirements/{tld}</code> returns the create payload and registry eligibility fields upfront.</span></div>
-        <div><strong>Per-key scoping</strong><span>Restrict a key to specific source IPs (CIDR) and/or specific domains — hand an agent a least-privilege key.</span></div>
+        <div><strong>Per-key scoping</strong><span>Restrict a key to specific source IPs (CIDR), specific domains and permissions (read-only, manage but no purchases, or custom scopes) — hand an agent a least-privilege key.</span></div>
         <div><strong>Rate-limit signalling</strong><span><code>X-RateLimit-*</code> headers on rate-limited endpoints.</span></div>
         <div><strong>Spec self-discovery</strong><span>Every response carries a <code>Link: rel="describedby"</code> pointer to the OpenAPI spec.</span></div>
         <div><strong>Free sandbox</strong><span>A <code>pk1_sb_</code> key runs the full lifecycle against an isolated sandbox with fake credit — responses include <code>"sandbox": true</code>.</span></div>
@@ -205,7 +205,7 @@
       <h2>Get started</h2>
       <p class="sub">Create keys, then make your first call.</p>
       <ul class="links">
-        <li><a href="/account/api">Create API keys</a><span class="desc">Generate and manage keys, per-key IP/domain restrictions, spend controls, webhooks — and free <strong>sandbox</strong> keys for testing.</span></li>
+        <li><a href="/account/api">Create API keys</a><span class="desc">Generate and manage keys, per-key IP/domain restrictions and permissions, spend controls, webhooks — and free <strong>sandbox</strong> keys for testing.</span></li>
         <li><a href="/account/api">Sandbox keys</a><span class="desc">A <code>pk1_sb_</code> key exercises the full API in an isolated environment — same base URL, no real actions or charges.</span></li>
       </ul>
     </div>
