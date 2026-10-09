@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.60
+# Porkbun API v3 — v3.62
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -137,7 +137,7 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 | `INSUFFICIENT_SCOPE` | HTTP 403: the API key's permissions (`keyScopes`) do not include the one this call needs (`requiredScope`). Nothing was changed. The account holder can change the key's permissions in API Access |
 | `ID_VERIFICATION_REQUIRED` | `/domain/create`: the account holder must verify their identity at https://porkbun.com/account/idVerification before this registration (or pay it by card). Nothing was charged. Not currently enforced |
 | `NEW_ACCOUNT_LIMIT` | `/domain/create`: a new account reached the number of API registrations allowed in its first days (`retryAfter` seconds until it lifts). Nothing was charged. Not currently enforced |
-| `VERIFICATION_REQUIRED` | The account's email and phone must be verified first (the phone can be verified over the API: `/account/verifyPhone/send` and `/confirm`); nothing was charged |
+| `VERIFICATION_REQUIRED` | The account's email and phone must be verified first (both can be verified over the API: `/account/verifyEmail/send` and `/account/verifyPhone/send`, then `/confirm`); nothing was charged |
 | `TERMS_NOT_AGREED` | Send `agreeToTerms: "yes"` |
 | `ORDER_FAILED` | The order could not be created; nothing was charged. Retry |
 | `INVALID_INPUT` | A parameter is missing, the wrong type, or out of range; the message says which |
@@ -197,6 +197,9 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 | `PHONE_CODE_INVALID` | The phone verification code is wrong or expired |
 | `PHONE_VERIFY_UNAVAILABLE` | This phone cannot be verified over the API (no number on the account, or a country that needs the website's CAPTCHA). Verify on the website |
 | `PHONE_VERIFY_LIMIT` | Five codes sent today, or ten wrong codes this hour |
+| `EMAIL_CODE_INVALID` | The email verification code is wrong, expired, or for an older address |
+| `EMAIL_VERIFY_LIMIT` | Ten wrong email codes this hour |
+| `EMAIL_VERIFY_UNAVAILABLE` | The verification email could not be sent, or the account has no address |
 | `PHONE_VERIFY_FAILED` | The code could not be sent. Retry, or use `"channel": "call"` |
 | `MONTHLY_SPEND_LIMIT_EXCEEDED` | The purchase would take this month's API spending past the account's monthly limit (its own, or the $100 default; `limitSource` says which). Nothing was charged. Only the account holder can raise it, on the website |
 | `CARD_DECLINED` | The saved card was declined on a top-up. No credit was added |
@@ -287,7 +290,7 @@ Additional endpoint-specific codes may be returned; always check `message` for d
 
 ## API key restrictions (IP addresses, domains and permissions)
 
-Each API key can optionally be restricted to specific source IPs, specific target domains, and specific permissions. All three are configured per key at [porkbun.com/account/api](https://porkbun.com/account/api) (click the gear icon next to any key). Empty/unset = no restriction.
+Each API key can optionally be restricted to specific source IPs, specific target domains, and specific permissions. All three are configured per key at [porkbun.com/account/api](https://porkbun.com/account/api): when creating the key, or later with the gear icon next to it. Empty/unset = no restriction.
 
 **Source IP allowlist.** When set, requests from any other IP fail immediately with HTTP 403 `IP_NOT_ALLOWED`, before any other endpoint logic runs. Supports IPv4 and IPv6, both bare addresses and CIDR ranges. One entry per line in the UI. Examples:
 
@@ -336,7 +339,7 @@ Some endpoints are rate limited. When exceeded, the API returns HTTP 429 with a 
 
 Subscribe HTTPS endpoints to account events and Porkbun will `POST` a signed JSON payload to them as those events happen — no polling required. Manage endpoints with the **Webhooks** endpoints in this reference, the MCP tools (`create_webhook`, `list_webhooks`, …), or the web UI at `porkbun.com/account/api`.
 
-**Event types:** `domain.registered`, `domain.renewed`, `domain.transfer.completed`, `domain.expiring` (fires at 60/30/5 days before expiry), `dns.record.created`, `dns.record.updated`, `dns.record.deleted`, `cloudflare.connect.completed`, `cloudflare.connect.failed` (a Cloudflare move reached a terminal state — `status` in the payload distinguishes `done` from `skipped`/`failed`, so you can stop polling `/cloudflare/getQueue`). Subscribe to specific types, to a prefix wildcard like `dns.*`, or to `*` for everything (recommended — you'll receive new event types automatically). Call `GET /webhook/eventTypes` for the live catalog.
+**Event types:** `domain.registered`, `domain.renewed`, `domain.transfer.completed`, `domain.expiring` (fires at 60/30/5 days before expiry), `dns.record.created`, `dns.record.updated`, `dns.record.deleted`, `account.verification.code_sent`, `account.verification.completed`, `cloudflare.connect.completed`, `cloudflare.connect.failed` (a Cloudflare move reached a terminal state — `status` in the payload distinguishes `done` from `skipped`/`failed`, so you can stop polling `/cloudflare/getQueue`). Subscribe to specific types, to a prefix wildcard like `dns.*`, or to `*` for everything (recommended — you'll receive new event types automatically). Call `GET /webhook/eventTypes` for the live catalog.
 
 **Payload envelope** — every delivery has the same outer shape:
 
@@ -349,7 +352,68 @@ Subscribe HTTPS endpoints to account events and Porkbun will `POST` a signed JSO
 }
 ```
 
-`id` is a UUIDv7 (time-ordered) and is also sent as the `X-Porkbun-Webhook-Id` header; use it to dedupe, since an endpoint may occasionally receive the same event more than once. The `data` object is event-specific.
+`id` is a UUIDv7 (time-ordered) and is also sent as the `X-Porkbun-Webhook-Id` header; use it to dedupe, since an endpoint may occasionally receive the same event more than once. `createdAt` is UTC (ISO 8601). The `data` object is event-specific; its fields are listed below.
+
+**What each event sends in `data`.** Dates inside `data` are UTC, formatted `YYYY-MM-DD HH:MM:SS`. Fields may be added over time, so ignore ones you don't recognise. No event carries contact details, auth codes, keys or other secrets.
+
+| Event | When it fires | `data` fields |
+|---|---|---|
+| `domain.registered` | A registration completes | `domain`, `tld`, `expireDate` |
+| `domain.renewed` | A renewal completes (manual, API or auto-renew) | `domain`, `tld`, `expireDate` (the new expiry) |
+| `domain.transfer.completed` | An inbound transfer finishes and the domain is in the account | `domain`, `tld` |
+| `domain.expiring` | 60, 30 and 5 days before expiry | `domain`, `tld`, `daysToExpire` (number: 60, 30 or 5), `expireDate` |
+| `dns.record.created` | A record is added (website, API, MCP, or a connected app) | `domain`, `name`, `id`, `type`, `content`, `ttl`, `prio` |
+| `dns.record.updated` | A record is changed | `domain`, `name`, `id`, `type`, `content`, `ttl`, `prio` (the values after the change) |
+| `dns.record.deleted` | A record is removed | `domain`, `name`, `id`, `type`, `content` (the values it had) |
+| `cloudflare.connect.completed` | A move to Cloudflare finished | `domain`, `status` (`done`), `message`, `cfAccountId`, `zoneId`, `previousNameservers`, `assignedNameservers`, `completedAt` |
+| `cloudflare.connect.failed` | A move to Cloudflare stopped without finishing | Same fields as completed; `status` is `failed` or `skipped`, `message` says why, `zoneId` may be `null` and the nameserver lists empty |
+| `account.verification.code_sent` | A verification code went to the account's email address or phone (from the website or the API) | `channel` (`email` or `phone`), `method` (`email`, `sms` or `call`), `sentTo` (masked), `expiresInMinutes` |
+| `account.verification.completed` | The account's email address or phone was verified (by link, website or API) | `channel`, `emailVerified`, `phoneVerified` (the account's state after this) |
+| `webhook.test` | You call `POST /webhook/test` | `endpointId` (number), `message` |
+
+Field notes:
+
+- `domain` is the registered domain (`example.com`); `tld` is its extension without the dot (`com`).
+- DNS events: `name` is the full hostname (`www.example.com`, or `example.com` for the apex). `id`, `ttl` and `prio` are strings, the same as in `/dns/retrieve`, and `prio` is `null` for types that have none. Record changes made by Porkbun itself for certificate issuance (`_acme-challenge` names) are not sent.
+- Verification events never contain the code: it only proves the address or phone is real because it arrives there. `code_sent` tells an agent to ask the person for it; `completed` tells it to retry what failed with `VERIFICATION_REQUIRED` once both are `true`. Login codes are not sent.
+- Cloudflare events: `previousNameservers` and `assignedNameservers` are arrays of hostnames; `cfAccountId` and `zoneId` are Cloudflare's IDs.
+
+Examples:
+
+```json
+{
+  "event": "domain.expiring",
+  "id": "018f9c2a-7b3e-7c41-9b8a-2f1e6d4c5a91",
+  "createdAt": "2026-06-17T09:00:00Z",
+  "data": { "domain": "example.com", "tld": "com", "daysToExpire": 30, "expireDate": "2026-07-17 18:30:00" }
+}
+```
+
+```json
+{
+  "event": "dns.record.updated",
+  "id": "018f9c2a-7b3e-7c41-9b8a-2f1e6d4c5a92",
+  "createdAt": "2026-06-17T18:31:05Z",
+  "data": { "domain": "example.com", "name": "www.example.com", "id": "123456789", "type": "A", "content": "192.0.2.1", "ttl": "600", "prio": null }
+}
+```
+
+```json
+{
+  "event": "cloudflare.connect.completed",
+  "id": "018f9c2a-7b3e-7c41-9b8a-2f1e6d4c5a93",
+  "createdAt": "2026-06-17T19:02:11Z",
+  "data": {
+    "domain": "example.com", "status": "done", "message": "Connected to Cloudflare.",
+    "cfAccountId": "0123456789abcdef0123456789abcdef", "zoneId": "fedcba9876543210fedcba9876543210",
+    "previousNameservers": ["curitiba.ns.porkbun.com", "fortaleza.ns.porkbun.com"],
+    "assignedNameservers": ["anna.ns.cloudflare.com", "lee.ns.cloudflare.com"],
+    "completedAt": "2026-06-17 19:02:10"
+  }
+}
+```
+
+To see any event's exact payload against your own handler, use a sandbox key and `POST /sandbox/triggerWebhook` with `{"eventType": "...", "domain": "example.com"}`; `GET /webhook/delivery/{id}` shows the full payload of any past delivery.
 
 **Delivery headers:**
 
@@ -397,6 +461,16 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.62
+
+- **Aftermarket search.** `GET /aftermarket/search` finds registered domains that are for sale (Afternic, Sedo, Atom, NameBright, DAX listings and auctions, Porkbun Marketplace) by keyword or exact name, with price, what the price means (`saleType`: buy now, minimum offer or current bid) and a `buyUrl` to buy on porkbun.com. `checkDomain` on a name registered to someone else now carries `aftermarketSearch`, so "taken" no longer reads as "not for sale".
+
+### v3.61
+
+- **Verify the email address from an agent.** `POST /account/verifyEmail/send` emails the verification message (link plus code) to the address on the account, and `POST /account/verifyEmail/confirm` checks the code, the email counterpart of `/account/verifyPhone`. New codes `EMAIL_CODE_INVALID`, `EMAIL_VERIFY_LIMIT`, `EMAIL_VERIFY_UNAVAILABLE`.
+- **Verification webhooks.** `account.verification.code_sent` (a code went to the email or phone, never the code itself) and `account.verification.completed` (with both verification states), from the website as well as the API, so an agent can wait for the person instead of polling.
+- **DNS webhook types.** `id`, `ttl` and `prio` in `dns.record.*` events are always strings, as in `/dns/retrieve`; some write paths sent numbers.
 
 ### v3.60
 
@@ -2618,6 +2692,44 @@ Response fields:
 | `totalPrice` | integer |  |
 | `message` | string |  |
 
+## GET /api/json/v3/aftermarket/search
+
+**Search domains for sale on the aftermarket**
+
+Find registered domains that are for sale: the partner aftermarket (Afternic, Sedo, Atom, NameBright and DAX listings, merged to the lowest price per name), Porkbun Marketplace, and DAX auctions. The same listings the website's search shows. Use it when `checkDomain` says a name is taken (its `aftermarketSearch` field links here), or to browse names for sale by keyword.
+
+`query` is a keyword (`coffee`) or a full domain (`coffee.com`). For a full domain, `exactMatch` holds its listing if it has one, and related listings follow. Results come back as: the exact name first, then buy-now listings, then make-offer, then auctions, each by price.
+
+**Read `saleType` before quoting a price.** `buy_now`: `price` is the price to buy it. `make_offer`: `price` is the seller's minimum offer, not a price. `auction`: `price` is the current bid. All prices are integer US cents and are the current listed price; the binding price is set at checkout.
+
+**Buying is on the website, not the API:** send the user to the listing's `buyUrl`. An aftermarket name arrives by transfer from the seller, usually within a few days (`fastTransfer: true` is quicker).
+
+A cold search queries several marketplaces and can take a few seconds; results are cached for 10 minutes. Limited to 20 searches a minute per account (`RATE_LIMIT_EXCEEDED`). If a source cannot be reached, the others are still returned and `sourcesUnavailable` names it. Also accepts POST with the same fields in the body. Works with sandbox keys (the listings are real).
+
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `query` | query | yes | A keyword or a full domain. |
+| `tld` | query | no | Only listings on this TLD, with or without the leading dot. |
+| `saleType` | query | no | Only this kind of listing. |
+| `priceMin` | query | no | Minimum price, integer US cents. |
+| `priceMax` | query | no | Maximum price, integer US cents. |
+| `limit` | query | no | Listings to return (1-200, default 50). `total` says how many matched. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `query` | string |  |
+| `exactMatch` |  | The listing for the exact domain searched, or null. |
+| `listings` | object[] |  |
+| `count` | integer |  |
+| `total` | integer | Listings that matched before `limit`. |
+| `sourcesUnavailable` | string[] | Sources that could not be searched this time (partners, marketplace, daxauction). |
+| `note` | string |  |
+
 ## GET /api/json/v3/dns/preflight/{domain}
 
 **Check whether a change will break the domain**
@@ -4136,7 +4248,7 @@ Response fields:
 
 **Confirm the phone verification code**
 
-Marks the account's phone number verified with the code from `POST /account/verifyPhone/send`. A wrong or expired code returns `PHONE_CODE_INVALID`; 10 wrong codes in an hour lock it for the hour (`PHONE_VERIFY_LIMIT`). The response says whether the email address is verified too, since purchases need both; the email is verified by the link in the verification email.
+Marks the account's phone number verified with the code from `POST /account/verifyPhone/send`. A wrong or expired code returns `PHONE_CODE_INVALID`; 10 wrong codes in an hour lock it for the hour (`PHONE_VERIFY_LIMIT`). The response says whether the email address is verified too, since purchases need both; verify the email the same way with `POST /account/verifyEmail/send` and `/confirm`.
 
 **Key permission needed:** `account`
 
@@ -4162,6 +4274,68 @@ Response fields:
 | `alreadyVerified` | boolean |  |
 | `emailVerified` | boolean |  |
 | `message` | string |  |
+
+## POST /api/json/v3/account/verifyEmail/send
+
+**Email a verification code to the account's address**
+
+Purchases and top-ups need a verified email address and phone number (`VERIFICATION_REQUIRED`). This emails the usual verification message, a link plus a code, to the address on the account (or to a new address waiting for verification). Whoever reads that inbox, the person or an agent with access to it, passes the code to `POST /account/verifyEmail/confirm`; clicking the link works too. The address cannot be chosen or changed over the API, and the code is never returned by the API or in a webhook: it only proves anything because it arrives in that inbox.
+
+A second request within 10 minutes returns `codeAlreadySent` instead of emailing again; the earlier code stays valid for 3 days. Accounts subscribed to `account.verification.code_sent` get a webhook when the email goes out. Already verified: `alreadyVerified: true`. Not available on sandbox keys.
+
+**Key permission needed:** `account`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
+| `X-API-Key` | header | no | API key header auth (use with X-Secret-API-Key) |
+| `X-Secret-API-Key` | header | no | Secret API key header auth (use with X-API-Key) |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `sent` | boolean |  |
+| `codeAlreadySent` | boolean |  |
+| `alreadyVerified` | boolean |  |
+| `sentTo` | string | The address, masked (`o•••@example.com`). |
+| `expiresInMinutes` | integer |  |
+| `retryAfterSeconds` | integer |  |
+| `message` | string |  |
+| `phoneVerified` | boolean |  |
+
+## POST /api/json/v3/account/verifyEmail/confirm
+
+**Confirm the email verification code**
+
+Marks the account's email address verified with the code from the verification email (`POST /account/verifyEmail/send`, or any verification email sent in the last 3 days). The code must belong to this account and to the address being verified. A wrong, expired or superseded code returns `EMAIL_CODE_INVALID`; 10 wrong codes in an hour lock it for the hour (`EMAIL_VERIFY_LIMIT`). The response says whether the phone is verified too, since purchases need both. Accounts subscribed to `account.verification.completed` get a webhook.
+
+**Key permission needed:** `account`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Authorization` | header | no | Bearer token: `Authorization: Bearer <token>` |
+| `X-API-Key` | header | no | API key header auth (use with X-Secret-API-Key) |
+| `X-Secret-API-Key` | header | no | Secret API key header auth (use with X-API-Key) |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `code` | string | yes | The verification code from the email, exactly as written. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `verified` | boolean |  |
+| `alreadyVerified` | boolean |  |
+| `message` | string |  |
+| `phoneVerified` | boolean |  |
 
 ## POST /api/json/v3/account/topupMpp
 
