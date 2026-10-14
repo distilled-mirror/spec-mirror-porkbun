@@ -62,6 +62,8 @@ npx -y @porkbunllc/mcp-server
 
 Repo and Claude Desktop config: [github.com/oborseth/Porkbun-MCP](https://github.com/oborseth/Porkbun-MCP). It covers everything documented below, plus documentation-search tools that work without credentials. See the repo README for the current tool list. All write operations automatically attach an `Idempotency-Key` so agent retries don't double-charge.
 
+Or use the hosted server with no install: `https://mcp.porkbun.com/mcp`. Clients that support OAuth sign in through the browser; agent platforms that can't do OAuth can send the account's API key pair instead (`X-API-Key` + `X-Secret-API-Key`, or `Authorization: Bearer pk1_…:sk1_…`), with the key's permissions, allowed domains and spend limits applying as usual. Setup: [Connect ChatGPT, Claude or another MCP client](https://porkbun.com/llms/guides/connect-chatgpt-or-claude).
+
 ## What you can build
 
 - **Agentic domain registration** — Search availability and pricing across hundreds of TLDs, then register domains on behalf of users with a single API call
@@ -2204,7 +2206,7 @@ Edit the domain's contacts. Send a `contacts` object keyed by role (`registrant`
 
 **`state` is matched against the official list for the country**, the same list the website's dropdown is built from, so case, accents and short codes all work: `NEW JERSEY`, `new jersey` and `NJ` are all stored as `New Jersey`, and `MEXICO CITY` as `Mexico City`. This matters because some registries validate the field and compare it case sensitively — .mx refuses `NEW JERSEY` and requires `Ciudad de México` for Mexico City, which Porkbun substitutes for you. For a TLD whose registry validates the field (currently the .mx family) a state that matches nothing is refused up front with `INVALID_STATE`, and the response lists every accepted value for that country in `validStates` — better than the registry's own "Object does not exist". For every other TLD an unrecognised state is sent through unchanged rather than rewritten. If a registry then refuses it, the contact is NOT created and no contacts are changed; the error names the registry's complaint.
 
-**Address-validated TLDs.** On a **registrant** change for a TLD that requires a validated address (`.de`, `.nrw`, `.uk`/`.co.uk`/…, `.us`, `.ca`, `.nyc`, `.au`, `.eu`, `.in`/`.co.in`/…, `.nz`/`.co.nz`/…), the API runs Google Address Validation (per-account rate-limited + 24h cached). If the address needs correction the call returns `ADDRESS_VALIDATION_REQUIRED` with a `suggestedAddress` and `addressValidationStatus`; re-submit with `addressValidationChoice` = `accept_suggestion` (save the standardized address) or `use_as_entered` (keep yours — stays blocked if a real correction was offered). For `.de`, DENIC registry verification is then attempted automatically (address-fingerprint / email); if it still needs a proof-of-address document upload, that is completed at porkbun.com. **Still not supported via API:** a registrant name/organization change on a `.au` domain is an auDA paid ownership trade and returns `REGISTRANT_CHANGE_NOT_SUPPORTED` (do it at porkbun.com). Admin/tech/billing edits are unaffected everywhere.
+**Address-validated TLDs.** On a **registrant** change for a TLD where we check the address (`.de`, `.nrw`, `.uk`/`.co.uk`/…, `.us`, `.ca`, `.nyc`, `.au`, `.eu`, `.in`/`.co.in`/…, `.nz`/`.co.nz`/…), the API runs Google Address Validation (per-account rate-limited + 24h cached). If the address needs correction the call returns `ADDRESS_VALIDATION_REQUIRED` with a `suggestedAddress` and `addressValidationStatus`; re-submit with `addressValidationChoice` = `accept_suggestion` (save the standardized address) or `use_as_entered` (keep yours). Either choice saves; validation suggests, it never refuses. For `.de`, DENIC registry verification is then attempted automatically (address-fingerprint / email); if it still needs a proof-of-address document upload, that is completed at porkbun.com. **Still not supported via API:** a registrant name/organization change on a `.au` domain is an auDA paid ownership trade and returns `REGISTRANT_CHANGE_NOT_SUPPORTED` (do it at porkbun.com). Admin/tech/billing edits are unaffected everywhere.
 
 **Key permission needed:** `domains`
 
@@ -2220,7 +2222,7 @@ Request body fields:
 | `contacts` | object | no | Any subset of roles to change; unspecified roles are left as-is. |
 | `contact` |  | no | A single contact applied to all four roles. Use this OR `contacts`, not both. |
 | `dryRun` | boolean | no | Validate and report wouldSucceed without applying the change. |
-| `addressValidationChoice` | string | no | Only for a registrant change on an address-validated TLD after an ADDRESS_VALIDATION_REQUIRED response. 'accept_suggestion' saves the standardized suggestedAddress; 'use_as_entered' keeps the submitted address (rejected if a real correction was offered). |
+| `addressValidationChoice` | string | no | Only for a registrant change on an address-validated TLD after an ADDRESS_VALIDATION_REQUIRED response. 'accept_suggestion' saves the standardized suggestedAddress; 'use_as_entered' keeps the submitted address. Either choice saves the edit. |
 
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/domain/updateContacts/example.com \
