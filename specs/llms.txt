@@ -11,7 +11,7 @@ Note: unlike some registrars, Porkbun API keys work regardless of whether accoun
 - Check domain availability and pricing across hundreds of TLDs (no auth required)
 - Register, renew, and transfer-in domain names programmatically
 - Get a single domain or list/filter all domains in an account (by TLD, expiry window, auto-renew, API-access)
-- Create, read, update, and delete DNS records (A, AAAA, CNAME, MX, TXT, NS, SRV, CAA, TLSA, SSHFP, ALIAS, HTTPS, SVCB)
+- Create, read, update, and delete DNS records (A, AAAA, CNAME, MX, TXT, NS, SRV, CAA, TLSA, SSHFP, ALIAS, HTTPS, SVCB, and DS on a delegated subdomain)
 - Manage DNSSEC records, URL forwarding, and glue records
 - Retrieve free SSL certificate bundles for registered domains
 - Provision and deploy Secure Static Hosting for a domain — create hosting (15-day free trial, one per domain), upload site files, and serve a static site over HTTPS, entirely via the API

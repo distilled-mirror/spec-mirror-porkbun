@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.62
+# Porkbun API v3 — v3.63
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -463,6 +463,10 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.63
+
+- **DS records.** DNS records can be type `DS`, to delegate a subdomain to another DNS host with DNSSEC on. `content` is `key_tag algorithm digest_type digest` (e.g. `2371 13 2 1F987C...`); the digest must be 40, 64, or 96 hex characters for digest type 1, 2, or 4. A DS at the domain itself is refused: that one is set at the registry with `/dns/createDnssecRecord`.
 
 ### v3.62
 
@@ -1180,7 +1184,7 @@ Request body fields:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `cost` | integer | yes | The registration cost in pennies (USD cents). Must exactly equal the total price for the domain at its minimum registration duration. Obtain this from /domain/checkDomain first. |
-| `agreeToTerms` | string | yes | Must be 'yes' or '1' to confirm agreement to the Domain Name Registration Agreement, Product Terms of Service, Privacy Policy, and automatic renewal terms. |
+| `agreeToTerms` | string | yes | Must be 'yes' or '1' to confirm agreement to the Domain Name Registration Agreement, Product Terms of Service, Data Processing Addendum, Privacy Policy, and automatic renewal terms. |
 | `idnLanguage` | string | no | Required for an internationalized domain name (IDN) under a TLD whose registry needs its language: a code or language name from `idnLanguages`, as returned by /domain/checkDomain or by the IDN_LANGUAGE_REQUIRED error (any case). Ignored for plain ASCII names. |
 | `whoisPrivacy` | boolean | no | Optional. Override WHOIS privacy for this registration. When omitted, the account-level default is used (set under Account Security Settings on porkbun.com/account — defaults to enabled). Pass `true` to force-enable privacy or `false` to register with public contact info. Strings `"on"`/`"off"`, `"true"`/`"false"`, `"yes"`/`"no"`, `"1"`/`"0"` are also accepted. Has no effect on TLDs that don't support WHOIS privacy (privacy stays off regardless). |
 | `payWith` | string | no | Optional. `"usdc"` pays for this purchase directly in USDC on Base over x402 instead of from account credit. The first call answers HTTP 402 (`PAYMENT_REQUIRED`) with Coinbase's terms in the `PAYMENT-REQUIRED` header and charges nothing; an x402 client pays and repeats the same request with a `PAYMENT-SIGNATURE` header, and the purchase completes in that call. If it then fails, the payment stays on the account as account credit; it is not sent back to the wallet. If your wallet pays URLs itself instead, pay the 402's `x402Url` (or have a person pay `payUrl`) and repeat the request with `usdcCheckoutId`. See the guide: https://porkbun.com/llms/guides/pay-with-usdc-x402. `"card"` pays by card through a Stripe Link agent wallet over MPP instead, with a real hold: the 402 carries a single-use `payUrl` and a `cardPaymentId`; pay the link (it authorizes, not charges), then repeat with `cardPaymentId`; the hold is captured if the purchase succeeds and released if it fails. Guide: https://porkbun.com/llms/guides/pay-with-card-mpp |
