@@ -62,7 +62,7 @@ npx -y @porkbunllc/mcp-server
 
 Repo and Claude Desktop config: [github.com/oborseth/Porkbun-MCP](https://github.com/oborseth/Porkbun-MCP). It covers everything documented below, plus documentation-search tools that work without credentials. See the repo README for the current tool list. All write operations automatically attach an `Idempotency-Key` so agent retries don't double-charge.
 
-Or use the hosted server with no install: `https://mcp.porkbun.com/mcp`. Clients that support OAuth sign in through the browser; agent platforms that can't do OAuth can send the account's API key pair instead (`X-API-Key` + `X-Secret-API-Key`, or `Authorization: Bearer pk1_…:sk1_…`), with the key's permissions, allowed domains and spend limits applying as usual. Setup: [Connect ChatGPT, Claude or another MCP client](https://porkbun.com/llms/guides/connect-chatgpt-or-claude).
+Or use the hosted server with no install: `https://mcp.porkbun.com/mcp`. Clients that support OAuth sign in through the browser (public clients with PKCE, or, for platforms that require one, a client ID and secret registered at `https://porkbun.com/oauth2/register`); agent platforms that can't do OAuth can send the account's API key pair instead (`X-API-Key` + `X-Secret-API-Key`, or `Authorization: Bearer pk1_…:sk1_…` as a single secret), with the key's permissions, allowed domains and spend limits applying as usual. Setup: [Connect ChatGPT, Claude or another MCP client](https://porkbun.com/llms/guides/connect-chatgpt-or-claude).
 
 ## What you can build
 
