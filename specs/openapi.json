@@ -631,7 +631,7 @@
                   },
                   "sandbox": {
                     "type": "boolean",
-                    "description": "If true, skip the approval flow and immediately return a throwaway SANDBOX key pair (public `pk1_sb_`, secret `sk1_sb_`) for a fresh test account seeded with $1000 fake credit. Use it as apikey/secretapikey against the same base URL to run the whole API in the isolated sandbox — no real registry actions, DNS changes, or charges. Rate-limited (20/IP/hour)."
+                    "description": "If true, skip the approval flow and immediately return a throwaway SANDBOX key pair (public `pk1_sb_`, secret `sk1_sb_`) for a fresh test account seeded with $1000 fake credit. Use it as apikey/secretapikey against the same base URL to run the whole API in the isolated sandbox — no real registry actions, DNS changes, or charges. Pass `scopes` to get a restricted sandbox key. Rate-limited (20/IP/hour)."
                   },
                   "returnUrl": {
                     "type": "string",
@@ -655,7 +655,7 @@
                         "account"
                       ]
                     },
-                    "description": "Optional permissions for the new key; `read` is always included. Shown to the account holder on the approval page, and the key gets exactly these. Leave out for a full-access key. Ask for the least you need, e.g. [\"dns\"] for a DNS updater. The account holder may grant less than you ask for (never more), so check `/ping` (`scopes`) once you have the key.",
+                    "description": "Optional permissions for the new key; `read` is always included. Shown to the account holder on the approval page, and the key gets exactly these. Leave out for a full-access key. Ask for the least you need, e.g. [\"dns\"] for a DNS updater. The account holder may grant less than you ask for (never more), so check `/ping` (`scopes`) once you have the key. Sandbox keys (`sandbox: true`) get exactly the scopes asked for, echoed in the response as `scopes`, so you can test a restricted key before asking for a real one.",
                     "example": [
                       "dns"
                     ]
