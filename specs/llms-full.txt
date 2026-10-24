@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.63
+# Porkbun API v3 — v3.64
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -145,6 +145,7 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 | `INVALID_INPUT` | A parameter is missing, the wrong type, or out of range; the message says which |
 | `API_ACCESS_DISABLED` | The domain is not opted in to API access. Only the account holder can turn it on (per domain, or for all domains, in account settings); `list_domains` / `/domain/listAll` show `apiAccess` |
 | `DOMAIN_NOT_ACTIVE` | The domain is not in a state that can be managed right now (for example pending or expired) |
+| `DOMAIN_EXPIRED` | The domain has expired, so email hosting on it can't be renewed until the domain is (`/email/renewMailbox`); nothing was charged |
 | `DOMAIN_NOT_FOUND` | The domain is not in this account (check the spelling, or list them with `/domain/listAll`). The response names the account in `account`, so a key for the wrong account is obvious |
 
 **Rate limiting**
@@ -463,6 +464,10 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.64
+
+- **Email on an expired domain.** `/email/renewMailbox` returns `DOMAIN_EXPIRED` while the mailbox's domain is expired, and set-up mailboxes stop renewing automatically until the domain is renewed. Renew the domain with `/domain/renew` first.
 
 ### v3.63
 
@@ -3635,7 +3640,7 @@ Response fields:
 
 **Renew a mailbox for a year**
 
-Add a year to a mailbox now, at its renewal price (`renewalPrice` in /email/getMailboxes; $36.00, or the legacy price for mailboxes that still qualify). A set-up mailbox also renews on its own when it is due (`autoRenews`), charged like any other renewal; this is for paying early, or for converting a trial to paid. Name the mailbox with `mailboxId` or `address`. `cost` must equal the price (`dryRun: true` with `cost: 0` quotes it and returns `expiresAfter`). Paid from account credit or with `payWith: "card"` / `"usdc"`, within the monthly API spend limit. The year is added to the current expiry date.
+Add a year to a mailbox now, at its renewal price (`renewalPrice` in /email/getMailboxes; $36.00, or the legacy price for mailboxes that still qualify). A set-up mailbox also renews on its own when it is due (`autoRenews`), charged like any other renewal; this is for paying early, or for converting a trial to paid. Name the mailbox with `mailboxId` or `address`. `cost` must equal the price (`dryRun: true` with `cost: 0` quotes it and returns `expiresAfter`). Paid from account credit or with `payWith: "card"` / `"usdc"`, within the monthly API spend limit. The year is added to the current expiry date. While the domain is expired the mailbox can't be renewed, by this call or automatically: renew the domain first (`DOMAIN_EXPIRED`).
 
 **Key permission needed:** `purchase`
 
