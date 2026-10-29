@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Porkbun API Documentation — domains, DNS, SSL &amp; hosting for developers and AI agents</title>
-  <meta name="description" content="The Porkbun API (v3.64) is a developer- and agent-friendly REST API to register, renew, transfer and manage domains, DNS &amp; DNSSEC, SSL certificates, email forwarding, the marketplace, static and WordPress hosting, Cloudflare connect, and outbound webhooks — with machine-readable errors, idempotency keys, a full OpenAPI spec, an official MCP server, and an isolated sandbox.">
+  <meta name="description" content="The Porkbun API (v3.65) is a developer- and agent-friendly REST API to register, renew, transfer and manage domains, DNS &amp; DNSSEC, SSL certificates, email forwarding, the marketplace, static and WordPress hosting, Cloudflare connect, and outbound webhooks — with machine-readable errors, idempotency keys, a full OpenAPI spec, an official MCP server, and an isolated sandbox.">
   <link rel="canonical" href="https://porkbun.com/api/json/v3/documentation">
   <meta name="robots" content="index, follow">
   <!-- Open Graph / Twitter for shareable, SEO-friendly previews -->
@@ -27,7 +27,7 @@
     "name": "Porkbun API",
     "abstract": "REST API to register and manage domains, DNS, DNSSEC, SSL, email forwarding, marketplace, static hosting, and webhooks.",
     "url": "https://porkbun.com/api/json/v3/documentation",
-    "softwareVersion": "3.64",
+    "softwareVersion": "3.65",
     "provider": { "@type": "Organization", "name": "Porkbun, LLC", "url": "https://porkbun.com" },
     "programmingModel": "REST/JSON",
     "documentation": "https://porkbun.com/api/json/v3/spec"
@@ -104,7 +104,7 @@
   <header class="brand">
     <div class="wrap">
       <div class="logo"><img src="/images/porkbun.comphpPkl2eU.svg" alt="Porkbun">porkbun<span>API</span></div>
-      <div class="meta">v3.64<a href="/">porkbun.com</a></div>
+      <div class="meta">v3.65<a href="/">porkbun.com</a></div>
     </div>
   </header>
 
@@ -113,6 +113,7 @@
       <h1>The domain API built for developers &amp; <em>AI agents</em></h1>
       <p>A clean REST/JSON API to register, renew, transfer and fully manage domains — plus DNS &amp; DNSSEC, SSL certificates, email forwarding, the aftermarket, static and WordPress hosting, Cloudflare connect, and signed webhooks. Machine-readable errors, idempotency keys, an OpenAPI spec, a first-party MCP server, and a free sandbox make it a great fit for automation and autonomous agents.</p>
       <div class="base"><b>Base URL</b><code>https://api.porkbun.com/api/json/v3</code></div>
+      <div><a class="cta" href="/api/json/v3/documentation/interactive">Open the interactive reference →</a></div>
     </div>
   </div>
 
@@ -151,7 +152,7 @@
         <div><strong>REST / JSON</strong><span>HTTPS only. Reads accept GET; writes are POST with a JSON body. Every response has a stable <code>status</code>.</span></div>
         <div><strong>Idempotency</strong><span>Send <code>Idempotency-Key</code> on any write; retries within 24h replay the original response — no double-charging.</span></div>
         <div><strong>Dry run</strong><span>Pass <code>dryRun: true</code> to rehearse a billable or destructive write (price, funds, eligibility) without performing it.</span></div>
-        <div><strong>Versioning</strong><span>Every response carries <code>X-API-Version</code> (currently 3.64). The path stays <code>/v3</code>; minor bumps are backward-compatible.</span></div>
+        <div><strong>Versioning</strong><span>Every response carries <code>X-API-Version</code> (currently 3.65). The path stays <code>/v3</code>; minor bumps are backward-compatible.</span></div>
         <div><strong>Request IDs</strong><span>An <code>X-Request-Id</code> header + <code>requestId</code> body field (UUIDv7) on every response for retries, logs, and support.</span></div>
       </div>
     </div>
@@ -194,6 +195,8 @@
         <li><a href="/llms/guides">Guides (how-tos)</a><span class="desc">Task walkthroughs: <a href="/llms/guides/getting-started">getting started</a>, <a href="/llms/guides/buy-a-domain-from-an-agent">buy a domain from an agent</a>, <a href="/llms/guides/connect-chatgpt-or-claude">connect ChatGPT or Claude</a>, <a href="/llms/guides/register-a-domain">register a domain</a>, <a href="/llms/guides/dynamic-dns">dynamic DNS</a>, <a href="/llms/guides/verify-a-webhook">verify a webhook</a>, <a href="/llms/guides/publish-to-wordpress">provision WordPress &amp; publish</a>, <a href="/llms/guides/move-domains-to-cloudflare">move domains to Cloudflare</a>, <a href="/llms/guides/pay-with-usdc-x402">pay with USDC (x402): buy directly or add credit</a>, <a href="/llms/guides/pay-with-card-mpp">pay with the user's card (MPP): buy directly with a hold, or add credit</a>, <a href="/llms/guides/spend-limits">cap what an agent can spend</a>, <a href="/llms/guides/verify-the-account">verify an account from an agent</a>, <a href="/llms/guides/connect-a-service-to-porkbun-dns">set up a customer&rsquo;s DNS for your service</a>, <a href="/llms/godaddy-migration">migrate from GoDaddy (beta)</a>.</span></li>
         <li><a href="/llms.txt">LLM overview (llms.txt)</a><span class="desc">Short orientation: what the API does, agent-safety features, quickstart, and key endpoints.</span></li>
         <li><a href="/llms/agent-setup">Agent setup prompt</a><span class="desc">Paste into your AI coding agent (Claude Code, Cursor, Cline, …) and it installs the MCP, obtains &amp; scopes credentials, and verifies — automatically.</span></li>
+        <li><a href="/llms/support">Before contacting support</a><span class="desc">For agents asked to reach Porkbun support: what you can do yourself through the MCP server, what only the account owner can do, and how to write to support.</span></li>
+        <li><a href="/llms/kb">Knowledge base (Markdown)</a><span class="desc">Every public help article from kb.porkbun.com as Markdown, by category, for agents and assistants.</span></li>
         <li><a href="/api/json/v3/documentation/interactive">Interactive reference</a><span class="desc">Browse and try endpoints in the browser (requires JavaScript).</span></li>
       </ul>
       <a class="cta" href="/api/json/v3/documentation/interactive">Open the interactive reference →</a>

@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.64
+# Porkbun API v3 — v3.65
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -464,6 +464,10 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.65
+
+- **Date filters on `/domain/listAll`.** `addedAfter` / `addedBefore` (when the domain joined the account at Porkbun, by registration or transfer), `createdAfter` / `createdBefore` (registry creation date) and `expiresAfter` / `expiresBefore`. Each domain now includes `addedDate`, and `sortName` accepts `added_date`. To sync only new domains, pass the newest `addedDate` you have seen as `addedAfter`.
 
 ### v3.64
 
@@ -1665,9 +1669,14 @@ Retrieve domains in the authenticated account. Results are returned in chunks of
 - `nameContains` — substring search
 - `tlds` — limit to these TLDs
 - `expiringWithinDays` — only domains expiring within N days
+- `addedAfter` / `addedBefore` — when the domain joined this account at Porkbun, by registration or transfer (`addedDate`). Use `addedAfter` to fetch only what's new since your last sync
+- `createdAfter` / `createdBefore` — the registry creation date (`createDate`); a transferred-in domain keeps its original one
+- `expiresAfter` / `expiresBefore` — an expiry window by date
 - `autoRenew` — `yes` / `no`
 - `apiAccess` — `yes` / `no` (filter to domains the API key can operate on)
-- `sortName` — `domain` / `tld` / `create_date` / `expire_date`
+- `sortName` — `domain` / `tld` / `create_date` / `added_date` / `expire_date`
+
+Dates are `YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS`, in UTC like every date in the response. `...After` includes the moment given; `...Before` excludes it.
 - `sortDirection` — `asc` / `desc`
 
 Supports both GET (with header auth) and POST (with body or header auth). For multi-value `tlds` on GET, use bracket syntax: `?tlds[]=com&tlds[]=io`.
@@ -1687,10 +1696,16 @@ Request body fields:
 | `domain` | string | no | Exact domain name match. Returns 0 or 1 result. Useful as an alternative to `/domain/get/{domain}`. |
 | `nameContains` | string | no | Substring match against the full domain name. Case-insensitive. |
 | `expiringWithinDays` | integer | no | Filter to domains expiring within this many days (relative to now). |
+| `addedAfter` | string | no | Only domains added to this account at Porkbun (registered or transferred in) at or after this date or date-time, UTC. Compare `addedDate` in the response. To sync only new domains, pass the newest `addedDate` you have seen. |
+| `addedBefore` | string | no | Only domains added to this account at Porkbun before this date or date-time, UTC. |
+| `createdAfter` | string | no | Only domains whose registry creation date (`createDate`) is at or after this date or date-time, UTC. A transferred-in domain keeps its original creation date, so use `addedAfter` for "new in my account". |
+| `createdBefore` | string | no | Only domains whose registry creation date is before this date or date-time, UTC. |
+| `expiresAfter` | string | no | Only domains expiring at or after this date or date-time, UTC. |
+| `expiresBefore` | string | no | Only domains expiring before this date or date-time, UTC. |
 | `tlds` | string[] | no | Limit to these TLDs (without leading dot). |
 | `autoRenew` | string | no | Filter to domains with auto-renew on or off. |
 | `apiAccess` | string | no | Filter to domains opted in to API access (yes) or not (no). Useful for finding domains an API key can actually operate on. |
-| `sortName` | string | no | Field to sort by. Default: `expire_date` ascending. |
+| `sortName` | string | no | Field to sort by. Default: `expire_date` ascending. `added_date` sorts by `addedDate`. |
 | `sortDirection` | string | no | Sort direction. Default: asc. |
 
 ```bash
@@ -1719,9 +1734,14 @@ Retrieve domains in the authenticated account. Results are returned in chunks of
 - `nameContains` — substring search
 - `tlds` — limit to these TLDs
 - `expiringWithinDays` — only domains expiring within N days
+- `addedAfter` / `addedBefore` — when the domain joined this account at Porkbun, by registration or transfer (`addedDate`). Use `addedAfter` to fetch only what's new since your last sync
+- `createdAfter` / `createdBefore` — the registry creation date (`createDate`); a transferred-in domain keeps its original one
+- `expiresAfter` / `expiresBefore` — an expiry window by date
 - `autoRenew` — `yes` / `no`
 - `apiAccess` — `yes` / `no` (filter to domains the API key can operate on)
-- `sortName` — `domain` / `tld` / `create_date` / `expire_date`
+- `sortName` — `domain` / `tld` / `create_date` / `added_date` / `expire_date`
+
+Dates are `YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS`, in UTC like every date in the response. `...After` includes the moment given; `...Before` excludes it.
 - `sortDirection` — `asc` / `desc`
 
 Supports both GET (with header auth) and POST (with body or header auth). For multi-value `tlds` on GET, use bracket syntax: `?tlds[]=com&tlds[]=io`.
@@ -1738,10 +1758,16 @@ Supports both GET (with header auth) and POST (with body or header auth). For mu
 | `domain` | query | no | Exact domain name match. Returns 0 or 1 result. |
 | `nameContains` | query | no | Substring match against the full domain name. Case-insensitive. |
 | `expiringWithinDays` | query | no | Filter to domains expiring within this many days. |
+| `addedAfter` | query | no | Only domains added to this account at Porkbun (registered or transferred in) at or after this date or date-time, UTC. Compare `addedDate` in the response. To sync only new domains, pass the newest `addedDate` you have seen. |
+| `addedBefore` | query | no | Only domains added to this account at Porkbun before this date or date-time, UTC. |
+| `createdAfter` | query | no | Only domains whose registry creation date (`createDate`) is at or after this date or date-time, UTC. A transferred-in domain keeps its original creation date, so use `addedAfter` for "new in my account". |
+| `createdBefore` | query | no | Only domains whose registry creation date is before this date or date-time, UTC. |
+| `expiresAfter` | query | no | Only domains expiring at or after this date or date-time, UTC. |
+| `expiresBefore` | query | no | Only domains expiring before this date or date-time, UTC. |
 | `tlds` | query | no | Limit to these TLDs (no leading dot). Use bracket form: `?tlds[]=com&tlds[]=io`. |
 | `autoRenew` | query | no | Filter to domains with auto-renew on or off. |
 | `apiAccess` | query | no | Filter to domains opted in to API access. |
-| `sortName` | query | no | Field to sort by. Default: `expire_date` ascending. |
+| `sortName` | query | no | Field to sort by. Default: `expire_date` ascending. `added_date` sorts by `addedDate`. |
 | `sortDirection` | query | no | Sort direction. Default: asc. |
 
 ```bash
@@ -3716,9 +3742,14 @@ Response fields (BasicResponse):
 
 **List marketplace domains**
 
-GET form of `/marketplace/getAll` for read-friendly filtering and URL-shareable searches. Authenticate via `X-API-Key` and `X-Secret-API-Key` headers, or `Authorization: Bearer <token>`. All filter params are optional and mirror the POST body. For multi-value `tlds`, use bracket syntax: `?tlds[]=com&tlds[]=io`.
+Retrieve domains listed on the Porkbun marketplace. Two modes:
 
-See the POST documentation for the full filtering semantics (unfiltered pagination vs filtered mode, `+include` / `-exclude` query prefixes, sort options).
+- **Unfiltered (default):** paginated raw listing, up to 5000 entries per call via `start` / `limit`.
+- **Filtered:** when any of `query`, `tlds`, `sldLengthMin`, `sldLengthMax`, or `sortName` is provided, results are filtered server-side. Filtered mode returns up to 1000 matching listings (matches the web UI's marketplace search).
+
+`query` supports `+include` and `-exclude` prefixes per word against the SLD (e.g. `+ai -test` matches SLDs containing 'ai' but not 'test'). Token-based access is not supported.
+
+On GET, authenticate with the `X-API-Key` and `X-Secret-API-Key` headers and pass the filters as query parameters. For multi-value `tlds`, use bracket syntax: `?tlds[]=com&tlds[]=io`.
 
 **Key permission needed:** `read`
 
@@ -3747,8 +3778,8 @@ Response fields:
 | Field | Type | Description |
 |---|---|---|
 | `status` | string |  |
-| `count` | integer |  |
-| `filtered` | boolean |  |
+| `count` | integer | Number of domains returned in this response |
+| `filtered` | boolean | True when one or more filter parameters were applied (query, tlds, sldLengthMin/Max, sortName). |
 | `domains` | object[] |  |
 
 ## POST /api/json/v3/marketplace/getAll
@@ -5374,6 +5405,7 @@ Request body fields:
 ## More
 
 - Guides (how-tos): https://porkbun.com/llms/guides
+- Help articles (knowledge base) as Markdown: https://porkbun.com/llms/kb
 - Topic index: https://porkbun.com/llms
 - Full reference (one file): https://porkbun.com/llms-full.txt
 - OpenAPI spec (full schemas): https://porkbun.com/api/json/v3/spec
