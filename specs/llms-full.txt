@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.65
+# Porkbun API v3 — v3.66
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -464,6 +464,10 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.66
+
+- **Primary and backup cards.** Accounts can save up to three cards on the website: one primary, the rest backups. `POST /account/topup` (and auto top-up) charges the primary and falls back to the backups when it is declined. The top-up response now says which card paid (`card`, `usedBackup`) and which were declined first (`declinedFirst`); a `CARD_DECLINED` error lists every card tried (`declined`). `GET /account/autoTopup` lists the saved cards, primary first, with their status (`cards`).
 
 ### v3.65
 
@@ -3870,7 +3874,9 @@ What auto top-up is set to, whether a payment method is on file, and what `POST 
 
 Auto top-up is how unattended work stops dead-ending on `INSUFFICIENT_FUNDS`: when an order drops the balance below `threshold`, Porkbun charges the saved payment method for `amount` and adds the credit.
 
-If `paymentMethodOnFile` is false the settings are inert and the response says so in `warnings` — a card can only be saved on the website, never over the API.
+`cards` lists the saved payment methods, primary first, with each one's `status`: a top-up charges the primary and falls back to the backups in that order. Use it to explain a decline, or to warn the account holder before a card stops working (`expired`, or `declined` with the decline code).
+
+If `paymentMethodOnFile` is false the settings are inert and the response says so in `warnings` — a card can only be saved on the website, never over the API. Cards are also added, removed and reordered only on the website. When every card is expired or recently declined, `warnings` says a top-up will probably fail.
 
 **Key permission needed:** `funding`
 
@@ -3885,6 +3891,7 @@ Response fields (AutoTopupResponse):
 | `effectiveAmount` | integer | What POST /account/topup would charge right now: the configured amount, or the $50 default. |
 | `defaultAmount` | integer | The platform default used when the account has configured nothing. |
 | `paymentMethodOnFile` | boolean | False means nothing can be charged and auto top-up cannot fire, whatever the settings say. |
+| `cards` | object[] | Saved payment methods, primary first. A top-up charges the primary and, if it is declined, the backups in order, at most one card per top-up. Always empty with a sandbox key. Cards are added, removed and reordered on the website only. |
 | `balance` | integer | Current account credit, in cents. |
 | `chargesToday` | integer |  |
 | `chargesThisMonth` | integer |  |
@@ -3932,6 +3939,7 @@ Response fields (AutoTopupResponse):
 | `effectiveAmount` | integer | What POST /account/topup would charge right now: the configured amount, or the $50 default. |
 | `defaultAmount` | integer | The platform default used when the account has configured nothing. |
 | `paymentMethodOnFile` | boolean | False means nothing can be charged and auto top-up cannot fire, whatever the settings say. |
+| `cards` | object[] | Saved payment methods, primary first. A top-up charges the primary and, if it is declined, the backups in order, at most one card per top-up. Always empty with a sandbox key. Cards are added, removed and reordered on the website only. |
 | `balance` | integer | Current account credit, in cents. |
 | `chargesToday` | integer |  |
 | `chargesThisMonth` | integer |  |
@@ -3949,7 +3957,9 @@ Response fields (AutoTopupResponse):
 
 The card itself can only be saved outside the API, and a supplied amount is held to the same 500–50000 cent range as one set through `/account/autoTopup`. On top of that the dollars are bounded by the month: the account's **monthly spend limit** caps top-ups as well as domain spend (it is the account saying how much the API may move, and a card charge is the API moving money), and an account that has never set one still gets a $100/month ceiling. Card, auto top-ups set off by an API purchase, MPP and USDC all count toward it — `monthlyCeiling` and `ceilingSource` on `GET /account/autoTopup` say which is in force. Top-ups are also limited to 5 per day and 20 per month (`TOPUP_LIMIT_EXCEEDED`), and every successful charge emails the account holder.
 
-Errors that matter: `NO_PAYMENT_METHOD` (nothing saved to charge — the account holder has to save a card or buy credit on the website), `CARD_DECLINED` (nothing was added; the card needs attention), `TOPUP_FAILED` (nothing was charged; retry once).
+**Primary and backup cards.** An account can save up to three cards on the website, one primary and the rest backups. A top-up charges the primary; if it is declined, it tries each backup in turn and charges at most one card. It does not fall back after a decline that suggests fraud (Radar blocks, lost or stolen cards). The response names the card that paid (`card`), sets `usedBackup` when a backup stepped in, and lists any card declined first in `declinedFirst`, so you can tell the account holder their primary card needs attention. `GET /account/autoTopup` lists the saved cards.
+
+Errors that matter: `NO_PAYMENT_METHOD` (nothing saved to charge, or every card is marked as no longer chargeable — the account holder has to add a card or buy credit on the website), `CARD_DECLINED` (every card tried was declined and nothing was added; `declined` lists each card with its decline code), `TOPUP_FAILED` (nothing was charged; retry once).
 
 With a sandbox key this grants simulated credit and charges nothing (`simulated: true`). Supports `dryRun`, which previews the amount and charges nothing in any environment. Honours `Idempotency-Key`.
 
@@ -3981,6 +3991,9 @@ Response fields:
 | `chargesThisMonth` | integer |  |
 | `simulated` | boolean | Sandbox only: credit was granted without charging a card. |
 | `message` | string |  |
+| `card` | object | The card a top-up charged. |
+| `usedBackup` | boolean | True when the primary card was declined and a backup paid. The declined card is in `declinedFirst`. |
+| `declinedFirst` | object[] | Cards tried and declined before `card` paid. Empty when the primary paid. |
 
 ## POST /api/json/v3/account/invite
 
@@ -4478,7 +4491,7 @@ Response fields (WebhookEventTypesResponse):
 
 **List webhook endpoints**
 
-List all webhook endpoints registered on the authenticated account, including each endpoint's signing secret and delivery health. Read-only; supports GET (header auth) or POST (body or header auth).
+List all webhook endpoints registered on the authenticated account, with delivery health. Each endpoint's signing secret is included for keys with full access or the account scope; read-only keys get it omitted. Read-only; supports GET (header auth) or POST (body or header auth).
 
 **Key permission needed:** `read`
 
@@ -4505,7 +4518,7 @@ Response fields (WebhookListResponse):
 
 **Get a webhook endpoint**
 
-Fetch a single webhook endpoint by id, including its signing secret and delivery health. Read-only; supports GET (header auth) or POST (body or header auth).
+Fetch a single webhook endpoint by id, with delivery health. The signing secret is included for keys with full access or the account scope; read-only keys get it omitted. Read-only; supports GET (header auth) or POST (body or header auth).
 
 **Key permission needed:** `read`
 
