@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.66
+# Porkbun API v3 — v3.72
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -270,6 +270,28 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 | `WP_CLI_FAILED` | The WordPress site rejected the command (e.g. no administrator account to bind to) |
 | `COST_ACKNOWLEDGMENT_REQUIRED` | Echo the plan price in cents as `acknowledgedCost` |
 | `NAMESERVER_CHANGE_REQUIRED` | Provisioning moves the domain to Porkbun NS; re-submit with `agreeToNameserverChange=true` |
+| `CONFIRMATION_REQUIRED` | The call needs an explicit confirmation field (named in the message) |
+| `REQUEST_EXPIRED` | An `/apikey/request` approval link or retrieve window has expired; request a new key |
+| `BACKUP_NOT_FOUND` | Use backup ids from `/hosting/backups` (one files id as fsId, one database id as dbId) |
+| `BACKUP_FAILED` | No backup was started; delete the existing on-demand backup first |
+| `OPERATION_IN_PROGRESS` | A restore, factory reset or staging job is already running on the site |
+| `STAGING_NOT_FOUND` | The site has no active staging copy |
+| `STAGING_ALREADY_EXISTS` | The site already has a staging copy (one per site) |
+| `STAGING_NOT_READY` | The staging site is still being built or changed |
+| `UPSTREAM_UNAVAILABLE` | WP Cloud or the WordPress site did not answer; nothing was changed |
+
+**Link in Bio**
+
+| Code | Meaning |
+|------|---------|
+| `LINKINBIO_NOT_FOUND` | The domain has no Link in Bio page; turn on a free one with `/linkinbio/create` or buy one with `/hosting/create` |
+| `LINKINBIO_ALREADY_EXISTS` | The domain already has a page; read it with `/linkinbio/get` |
+| `LINKINBIO_CREATE_FAILED` | The free page could not be turned on (the message says why) |
+| `LINKINBIO_SAVE_FAILED` | A change could not be saved; retry |
+| `FEATURE_NOT_IN_PLAN` | The free plan does not include this (scheduling, animation, passcode protection, analytics IDs); nothing was changed |
+| `LINK_LIMIT_REACHED` | The page has as many links as its plan allows (50 free, 1000 paid) |
+| `LINK_NOT_FOUND` | No link with that id on this page; ids come from `/linkinbio/get` |
+| `DUPLICATE_LINK` | Another link has the same title and URL |
 
 Additional endpoint-specific codes may be returned; always check `message` for details.
 
@@ -464,6 +486,31 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.72
+
+- **`GET /domain/getGlue` has one shape, plus a typed `glue` list.** `hosts` is always an array (it was `null` with no glue) and every address object carries both `v4` and `v6`; the sandbox now matches live (it returned a flat IP list). New `glue`: the same data as `{host, v4, v6}` objects, which generated clients can type without an overlay. The spec now documents `/dns/create`'s `id` as the integer it has always returned.
+
+### v3.71
+
+- **Revoke the calling key.** `POST /apikey/revoke` with `"confirm": "revoke"` permanently revokes the key making the call (only that key). Any permission level can call it.
+
+### v3.70
+
+- **Cloud for WordPress staging.** `getStaging`, `createStaging` (from live or a backup pair), `resetStaging`, `publishStaging` (safety backup of live first), `deleteStaging`, plus `setStagingGate`, `setStagingGuard` and `setStagingEnvironment`. Jobs are queued; poll `getStaging`.
+
+### v3.69
+
+- **Cloud for WordPress site management.** `GET /hosting/get` returns `wordpress.site` (PHP and WordPress versions, SSL, storage, search visibility, staging, background jobs). New: `setPhpVersion`, `setWordPressVersion`, `reissueSsl`, `setSearchVisibility`, `backups`, `createBackup`, `deleteBackup`, `restoreBackup` (queued; poll `/hosting/get`).
+
+### v3.68
+
+- **Hosting auto-renew.** `POST /hosting/updateAutoRenew/{domain}` (`{"autoRenew": false}`) turns auto-renew off or on for any paid hosting product, the same switch as on the website. The response says what happens at `expireDate`.
+- A `PAYMENT_REQUIRED` response for `"payWith": "card"` now carries card-specific `next_action` steps (it used to lead with the USDC ones).
+
+### v3.67
+
+- **Link in Bio.** New `/linkinbio` endpoints: `get` the page, `create` a free one, and edit it (`updateProfile`, `addLink`, `editLink`, `deleteLink`, `reorderLinks`, `updateSocials`, `updateAppearance`, `updateSettings`). Paid plans (`PIXIELINKSM1`, `PIXIELINKSY1`) are sold through `/hosting/create`, which upgrades a free page and keeps its content. The free Link in Bio and WordPress preview that come with a domain no longer block `/hosting/create` (it used to return `HOSTING_ALREADY_EXISTS`).
 
 ### v3.66
 
@@ -1962,7 +2009,8 @@ Response fields:
 | Field | Type | Description |
 |---|---|---|
 | `status` | string |  |
-| `hosts` | array[] | Array of [hostname, ipAddresses] tuples. Each element is a two-item array: index 0 is the full hostname (string), index 1 is an object with `v4` (array of IPv4 strings) and `v6` (array of IPv6 strings). Example: `["ns1.example.com", {"v4": ["1.2.3.4"], "v6": []}]` |
+| `hosts` | array[] | Glue hosts as two-item arrays: `[hostname, {"v4": [...], "v6": [...]}]`, e.g. `["ns1.example.com", {"v4": ["192.0.2.1"], "v6": []}]`. Always an array (empty with no glue); both `v4` and `v6` are always present. Kept for existing clients; new code should read `glue`, which has the same data as objects. |
+| `glue` | object[] | The same glue hosts as objects (added in 3.72). Always an array. |
 
 ## GET /api/json/v3/domain/getGlue/{domain}
 
@@ -1990,7 +2038,8 @@ Response fields:
 | Field | Type | Description |
 |---|---|---|
 | `status` | string |  |
-| `hosts` | array[] | Array of [hostname, ipAddresses] tuples. Each element is a two-item array: index 0 is the full hostname (string), index 1 is an object with `v4` (array of IPv4 strings) and `v6` (array of IPv6 strings). Example: `["ns1.example.com", {"v4": ["1.2.3.4"], "v6": []}]` |
+| `hosts` | array[] | Glue hosts as two-item arrays: `[hostname, {"v4": [...], "v6": [...]}]`, e.g. `["ns1.example.com", {"v4": ["192.0.2.1"], "v6": []}]`. Always an array (empty with no glue); both `v4` and `v6` are always present. Kept for existing clients; new code should read `glue`, which has the same data as objects. |
+| `glue` | object[] | The same glue hosts as objects (added in 3.72). Always an array. |
 
 ## POST /api/json/v3/domain/createGlue/{domain}/{subdomain}
 
@@ -2487,7 +2536,7 @@ Response fields:
 | Field | Type | Description |
 |---|---|---|
 | `status` | string |  |
-| `id` | string | The numeric ID of the newly created record |
+| `id` | integer | The ID of the newly created record, as a JSON number. `/dns/retrieve` and `existingId` carry record IDs as strings, so compare them as strings. |
 | `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 
 ## POST /api/json/v3/dns/edit/{domain}/{id}
@@ -3157,6 +3206,8 @@ Provision hosting (Secure Static Hosting or Cloud for WordPress) for a domain in
 
 **Rate limit:** 10 provisions per account per hour (`dryRun` calls are free).
 
+**Link in Bio** (`PIXIELINKSM1` monthly, `PIXIELINKSY1` yearly): a paid Link in Bio page. Over a free Link in Bio page (most .com domains registered at Porkbun have one) this upgrades it and keeps the title, links and settings; the response says so. The free Link in Bio and the free WordPress preview that come with a domain never block a purchase: another product replaces them. Edit the page with the `/linkinbio` endpoints.
+
 **Key permission needed:** `purchase`
 
 | Parameter | In | Required | Description |
@@ -3201,6 +3252,8 @@ Response fields:
 **Applies to:** Both products.
 
 Return the Secure Static Hosting status for a domain (plan, server, trial, expiry, auto-renew), or `hosting: null` if none. Also available via POST.
+
+For a live Cloud for WordPress site, `wordpress.site` adds what the hosting page on porkbun.com shows: PHP version (and the versions available), WordPress version setting, SSL, storage used, search visibility, staging, and the latest background jobs (restores, factory resets, site copies). Reading it takes a couple of seconds, because it asks WP Cloud.
 
 **Key permission needed:** `read`
 
@@ -3313,6 +3366,8 @@ Response fields:
 **Applies to:** Both products.
 
 Deprovision (cancel) Secure Static Hosting for a domain; teardown is scheduled and completed by Porkbun. Note: the domain has already used its one free trial, so provisioning it again later will be charged (no second free trial).
+
+**Link in Bio:** cancelling a paid plan moves the page to the free plan (50 links, fewer features); the page and its content stay. A free page cannot be cancelled here (`NOT_SUPPORTED_FOR_PRODUCT`).
 
 **Key permission needed:** `hosting`
 
@@ -5412,6 +5467,960 @@ Request body fields:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `dryRun` | boolean | no |  |
+
+## GET /api/json/v3/linkinbio/get/{domain}
+
+**Get a Link in Bio page**
+
+The page on a domain: its public URL, plan and what the plan allows, profile, links in display order (with ids), social icons, appearance and settings. Use it before editing, and to read link ids.
+
+**Errors:** `LINKINBIO_NOT_FOUND` (no page; the message says what the domain has instead).
+
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+| `X-API-Key` | header | no |  |
+| `X-Secret-API-Key` | header | no |  |
+
+Response fields (LinkInBioResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `linkInBio` | object |  |
+
+## POST /api/json/v3/linkinbio/get/{domain}
+
+**Get a Link in Bio page**
+
+The page on a domain: its public URL, plan and what the plan allows, profile, links in display order (with ids), social icons, appearance and settings. Use it before editing, and to read link ids.
+
+**Errors:** `LINKINBIO_NOT_FOUND` (no page; the message says what the domain has instead).
+
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Response fields (LinkInBioResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `linkInBio` | object |  |
+
+## POST /api/json/v3/linkinbio/create/{domain}
+
+**Turn on a free Link in Bio page**
+
+Turns on a free page served on the domain itself (plan PIXIELINKS2M1: up to 50 links; no scheduling, animation, passcode protection or analytics IDs). Free, nothing is ordered. It starts with a placeholder title, bio and link: replace them with `updateProfile`, `editLink` and `addLink`.
+
+The domain is pointed at the page with DNS records, which needs Porkbun nameservers: if the domain uses other ones, send `agreeToNameserverChange: true` to switch them. A free WordPress preview on the domain is replaced; any other hosting is not (`HOSTING_ALREADY_EXISTS`).
+
+Many .com domains registered at Porkbun already have a free page, forwarded to `<domain>.l.ink`; check with `get` first. For a paid plan (1000 links, every feature), use `/hosting/create` with sku `PIXIELINKSM1` or `PIXIELINKSY1`: it upgrades an existing free page and keeps its content. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `LINKINBIO_ALREADY_EXISTS`, `HOSTING_ALREADY_EXISTS`, `NAMESERVER_CHANGE_REQUIRED`, `LINKINBIO_CREATE_FAILED`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `agreeToNameserverChange` | boolean | no | Required when the domain is not on Porkbun nameservers. |
+
+Response fields (LinkInBioResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `linkInBio` | object |  |
+
+## POST /api/json/v3/linkinbio/updateProfile/{domain}
+
+**Update the page title, bio and avatar**
+
+Only the fields sent change; an empty title or bio removes it. `avatar` is a base64 JPEG or PNG (a `data:` URL works too), up to 5 MB and 4000x4000; null removes it. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `INVALID_INPUT`, `LINKINBIO_SAVE_FAILED`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `title` | string | no | Up to 100 characters. |
+| `bio` | string | no | Up to 500 characters. |
+| `avatar` | string | no | Base64 JPEG or PNG, or null to remove. |
+
+Response fields (LinkInBioResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `linkInBio` | object |  |
+
+## POST /api/json/v3/linkinbio/addLink/{domain}
+
+**Add a link**
+
+Adds a link, featured link or category heading. `position`: `bottom` (default) or `top`. Returns the new link (with its id) and the page. Fields marked "paid plans" return `FEATURE_NOT_IN_PLAN` on the free on-domain plan, and nothing is saved. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `LINK_LIMIT_REACHED`, `DUPLICATE_LINK` (same title and URL as another link), `FEATURE_NOT_IN_PLAN`, `INVALID_INPUT`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | string | no | `link` (default), `featured` or `category` (a heading; no url). |
+| `title` | string | yes | Up to 255 characters. |
+| `url` | string | no | http(s) address, up to 255 characters; a bare host gets https:// added. Not for a category. |
+| `enabled` | boolean | no | Default true. |
+| `startDate` | string | no | Show from this time: YYYY-MM-DD, or ISO 8601; UTC unless an offset is given. null clears it. Paid plans. |
+| `endDate` | string | no | Hide after this time; same format. Paid plans. |
+| `animation` | string | no | `pulse`, `bounce`, `shake`, or null for none. Paid plans. |
+| `protection` | object | no | null removes it. `code` (passcode; paid plans) needs value; `birthday` takes value 18, 21 or 25; `sensitive` shows a warning. |
+| `position` | string | no |  |
+
+Response fields (LinkInBioLinkResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `link` | object | One entry on the page, in display order. |
+| `linkInBio` | object |  |
+
+## POST /api/json/v3/linkinbio/editLink/{domain}
+
+**Edit a link**
+
+Changes any of a link's fields; `id` is required and only the fields sent change. Set `enabled: false` to hide a link without deleting it. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `LINK_NOT_FOUND`, `DUPLICATE_LINK`, `FEATURE_NOT_IN_PLAN`, `INVALID_INPUT`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | string | no | `link` (default), `featured` or `category` (a heading; no url). |
+| `title` | string | no | Up to 255 characters. |
+| `url` | string | no | http(s) address, up to 255 characters; a bare host gets https:// added. Not for a category. |
+| `enabled` | boolean | no | Default true. |
+| `startDate` | string | no | Show from this time: YYYY-MM-DD, or ISO 8601; UTC unless an offset is given. null clears it. Paid plans. |
+| `endDate` | string | no | Hide after this time; same format. Paid plans. |
+| `animation` | string | no | `pulse`, `bounce`, `shake`, or null for none. Paid plans. |
+| `protection` | object | no | null removes it. `code` (passcode; paid plans) needs value; `birthday` takes value 18, 21 or 25; `sensitive` shows a warning. |
+| `id` | integer | yes | From `get`. |
+
+Response fields (LinkInBioLinkResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `link` | object | One entry on the page, in display order. |
+| `linkInBio` | object |  |
+
+## POST /api/json/v3/linkinbio/deleteLink/{domain}
+
+**Delete a link**
+
+Deletes a link with its image, animation and protection. To hide a link instead, use editLink with `enabled: false`. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `LINK_NOT_FOUND`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `id` | integer | yes | From `get`. |
+
+Response fields (LinkInBioResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `linkInBio` | object |  |
+
+## POST /api/json/v3/linkinbio/reorderLinks/{domain}
+
+**Reorder links**
+
+`ids` lists every link id on the page, once each, in the order to show them. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `INVALID_INPUT` (the message lists the current ids).
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `ids` | integer[] | yes | Every link id, in display order. |
+
+Response fields (LinkInBioResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `linkInBio` | object |  |
+
+## POST /api/json/v3/linkinbio/updateSocials/{domain}
+
+**Update social icons**
+
+`location` (`top` or `bottom`) and `socials`, an object of email, instagram, facebook, tiktok, youtube, twitter and linkedin: a handle or a profile URL. Only the keys sent change; "" or null removes one. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `INVALID_INPUT`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `location` | string | no |  |
+| `socials` | object | no |  |
+
+Response fields (LinkInBioResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `linkInBio` | object |  |
+
+## POST /api/json/v3/linkinbio/updateAppearance/{domain}
+
+**Update the page appearance**
+
+Only the keys sent change; null resets one to the editor default. `preset` applies a ready-made look in the editor; set individual colours to fine-tune. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `INVALID_INPUT`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `preset` | string | no |  |
+| `fontFamily` | string | no |  |
+| `buttonStyle` | string | no |  |
+| `radius` | integer | no | Button corner radius in pixels, 0-50. |
+| `pageBackgroundMode` | string | no | `gradient` blends pageBackgroundColor into pageBackgroundColor2. |
+| `textAlign` | string | no |  |
+| `pageBackgroundColor` | string | no | Hex colour, e.g. #1b5a8a. |
+| `pageBackgroundColor2` | string | no | Hex colour, e.g. #1b5a8a. |
+| `pageColor` | string | no | Hex colour, e.g. #1b5a8a. |
+| `boxBackgroundColor` | string | no | Hex colour, e.g. #1b5a8a. |
+| `borderColor` | string | no | Hex colour, e.g. #1b5a8a. |
+
+Response fields (LinkInBioResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `linkInBio` | object |  |
+
+## POST /api/json/v3/linkinbio/updateSettings/{domain}
+
+**Update page settings**
+
+`sensitiveContent`: a warning (`generic`) or an age check (`18`, `21`, `25`) shown before the page, or null to turn it off. `analytics`: tracking IDs (googleAnalyticsId, facebookPixelId, twitterPixelId, tikTokPixelId) and UTM parameters (utmSource, utmMedium) added to outgoing links; paid plans; "" removes one. The mailing-list signup form is set up in the editor only. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `FEATURE_NOT_IN_PLAN`, `INVALID_INPUT`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `sensitiveContent` | string | no |  |
+| `analytics` | object | no |  |
+
+Response fields (LinkInBioResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `linkInBio` | object |  |
+
+## POST /api/json/v3/hosting/updateAutoRenew/{domain}
+
+**Turn hosting auto-renew on or off**
+
+**Applies to:** every paid hosting product (Secure Static Hosting, Cloud for WordPress, Link in Bio).
+
+The same switch as on the hosting page on porkbun.com. Off: the plan stays active until `expireDate` and is not charged again (a trial ends without a charge); after that the hosting is removed, except a paid Link in Bio page, which moves to the free plan with its content kept. On: it renews before `expireDate` at the plan price. `GET /hosting/get` shows the current setting (`autoRenew`).
+
+Free plans never renew, so they return `NOT_SUPPORTED_FOR_PRODUCT`. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `HOSTING_NOT_FOUND`, `NOT_SUPPORTED_FOR_PRODUCT`, `INVALID_INPUT`, `UPDATE_FAILED`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `autoRenew` | boolean | yes | true to renew automatically, false to let the plan end at expireDate. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `product` | string |  |
+| `autoRenew` | boolean |  |
+| `isTrial` | boolean |  |
+| `expireDate` | string | When the current term (or trial) ends. |
+| `cost` | object |  |
+| `message` | string | What happens next, in words to relay to the user. |
+
+## POST /api/json/v3/hosting/setPhpVersion/{domain}
+
+**Set the PHP version**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+Changes the PHP version the site runs. `version` must be one of `wordpress.site.availablePhpVersions` from `GET /hosting/get`. Takes effect within a minute or two; switch back the same way if the site misbehaves. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `INVALID_INPUT` (lists the versions), `UPSTREAM_UNAVAILABLE`, `UPDATE_FAILED`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `version` | string | yes |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `message` | string | What happens next, to relay to the user. |
+
+## POST /api/json/v3/hosting/setWordPressVersion/{domain}
+
+**Set the WordPress version**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+`latest` follows WordPress releases; `previous` holds one major release back, the escape hatch when an update breaks the site. While on `previous` the site gets no newer releases, so set `latest` again once fixed. No pinned version numbers. Takes a few minutes. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `INVALID_INPUT`, `UPDATE_FAILED`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `version` | string | yes |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `message` | string | What happens next, to relay to the user. |
+
+## POST /api/json/v3/hosting/reissueSsl/{domain}
+
+**Restart SSL issuance**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+Restarts certificate issuance for the domain and its www. host when it is stuck (check `wordpress.site.ssl`). The domain must point at the site. Once per 5 minutes per site. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `RATE_LIMIT_EXCEEDED` (with ttlRemaining), `UPDATE_FAILED`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `message` | string | What happens next, to relay to the user. |
+
+## POST /api/json/v3/hosting/setSearchVisibility/{domain}
+
+**Show or hide the site from search engines**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+`visible: false` asks search engines not to index the site (WordPress "discourage search engines"); `true` allows it again. Pages already indexed drop out over time. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `INVALID_INPUT`, `UPSTREAM_UNAVAILABLE` (the site could not be reached; nothing changed).
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `visible` | boolean | yes |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `message` | string | What happens next, to relay to the user. |
+
+## GET /api/json/v3/hosting/backups/{domain}
+
+**List backups**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+The site's backups, newest first: automatic file backups daily and database backups hourly (when it changes), kept 30 days, plus up to one on-demand backup of each type. Returns the newest `limit` (default 100, max 1000; on-demand ones are always included) and `total`. `type` filters to `files` or `database`.
+
+**Errors:** `STAGING_NOT_FOUND`, `UPSTREAM_UNAVAILABLE`.
+
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `staging` | query | no |  |
+| `limit` | query | no |  |
+| `type` | query | no |  |
+| `X-API-Key` | header | no |  |
+| `X-Secret-API-Key` | header | no |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `target` | string |  |
+| `backups` | object[] |  |
+| `count` | integer |  |
+| `total` | integer | All backups (of `type`, if given). |
+| `retention` | string |  |
+| `message` | string |  |
+
+## POST /api/json/v3/hosting/backups/{domain}
+
+**List backups**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+The site's backups, newest first: automatic file backups daily and database backups hourly (when it changes), kept 30 days, plus up to one on-demand backup of each type. Returns the newest `limit` (default 100, max 1000; on-demand ones are always included) and `total`. `type` filters to `files` or `database`.
+
+**Errors:** `STAGING_NOT_FOUND`, `UPSTREAM_UNAVAILABLE`.
+
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `staging` | boolean | no | true: act on the site's staging copy instead of the live site. |
+| `limit` | integer | no | Default 100. |
+| `type` | string | no |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `target` | string |  |
+| `backups` | object[] |  |
+| `count` | integer |  |
+| `total` | integer | All backups (of `type`, if given). |
+| `retention` | string |  |
+| `message` | string |  |
+
+## POST /api/json/v3/hosting/createBackup/{domain}
+
+**Take an on-demand backup**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+Starts a backup of the site's files and database now. Only one on-demand backup of each type can exist: delete the old one first (`BACKUP_FAILED` says "Quota Reached" otherwise). It appears in `/hosting/backups` when finished, usually within a few minutes. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `BACKUP_FAILED`, `STAGING_NOT_FOUND`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `staging` | boolean | no | true: act on the site's staging copy instead of the live site. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `message` | string | What happens next, to relay to the user. |
+
+## POST /api/json/v3/hosting/deleteBackup/{domain}
+
+**Delete an on-demand backup**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+Deletes an on-demand backup by `id` (from `/hosting/backups`). Automatic backups cannot be deleted. Deletion finishes in the background within a minute or two. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `BACKUP_NOT_FOUND`, `NOT_SUPPORTED_FOR_PRODUCT` (an automatic backup), `UPDATE_FAILED`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `staging` | boolean | no | true: act on the site's staging copy instead of the live site. |
+| `id` | string | yes |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `message` | string | What happens next, to relay to the user. |
+
+## POST /api/json/v3/hosting/restoreBackup/{domain}
+
+**Restore from a backup**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+**Replaces the site's files and database** with one files backup (`fsId`) and one database backup (`dbId`) from `/hosting/backups`. Anything changed since then is lost. The restore is queued; the site is unavailable while it runs (usually a few minutes) and the account holder is emailed when it finishes. Poll `GET /hosting/get` (`wordpress.site.operations`) for its state. One restore or factory reset at a time, and not while a staging job runs. Confirm with the user first; a dry run shows the exact backups and dates. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `BACKUP_NOT_FOUND`, `OPERATION_IN_PROGRESS`, `STAGING_NOT_FOUND`, `UPDATE_FAILED`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `staging` | boolean | no | true: act on the site's staging copy instead of the live site. |
+| `fsId` | string | yes | A files backup id. |
+| `dbId` | string | yes | A database backup id. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `target` | string |  |
+| `operation` | object |  |
+| `message` | string |  |
+
+## GET /api/json/v3/hosting/getStaging/{domain}
+
+**Get the staging site**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+The staging copy: URL, status, the latest job and its state, password protection (with the password), outbound email/API blocking and environment type. `staging` is null when there is none. Poll this after createStaging, resetStaging, publishStaging or deleteStaging. Needs the `hosting` permission because it returns the staging password.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `X-API-Key` | header | no |  |
+| `X-Secret-API-Key` | header | no |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `staging` | object |  |
+
+## POST /api/json/v3/hosting/getStaging/{domain}
+
+**Get the staging site**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+The staging copy: URL, status, the latest job and its state, password protection (with the password), outbound email/API blocking and environment type. `staging` is null when there is none. Poll this after createStaging, resetStaging, publishStaging or deleteStaging. Needs the `hosting` permission because it returns the staging password.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `staging` | object |  |
+
+## POST /api/json/v3/hosting/createStaging/{domain}
+
+**Create a staging site**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+Builds a private copy of the live site on a `*.stagebun.com` address to try changes safely: from the live site as it is now, or from a backup pair (`fsId` + `dbId` from `/hosting/backups`). One per site. It starts password protected (the password is in the response), with outgoing email blocked and search engines asked not to index it. Queued; usually a few minutes, and the account holder is emailed when it is ready. Poll `getStaging`. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `STAGING_ALREADY_EXISTS`, `OPERATION_IN_PROGRESS`, `BACKUP_NOT_FOUND`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `fsId` | string | no | Optional: build from this files backup of the live site (with dbId). |
+| `dbId` | string | no | Optional: the database backup to go with fsId. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `staging` | object |  |
+| `message` | string |  |
+
+## POST /api/json/v3/hosting/resetStaging/{domain}
+
+**Rebuild the staging site**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+Replaces everything on the staging site with a fresh copy of the live site, or of a backup pair (`fsId` + `dbId`). Changes made on staging are lost. Queued; poll `getStaging`. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `STAGING_NOT_FOUND`, `STAGING_NOT_READY`, `OPERATION_IN_PROGRESS`, `BACKUP_NOT_FOUND`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `fsId` | string | no | Optional: build from this files backup of the live site (with dbId). |
+| `dbId` | string | no | Optional: the database backup to go with fsId. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `operation` | object |  |
+| `message` | string | What happens next, to relay to the user. |
+
+## POST /api/json/v3/hosting/publishStaging/{domain}
+
+**Publish staging to the live site**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+**Replaces the live site's files and database with the staging site's.** A fresh on-demand backup of the live site is taken first (it replaces any existing on-demand backup), so the live site can be restored from `/hosting/backups` if needed. Queued; several minutes, and the account holder is emailed when it is done. Confirm with the user first; poll `getStaging`. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `STAGING_NOT_FOUND`, `STAGING_NOT_READY`, `OPERATION_IN_PROGRESS`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `operation` | object |  |
+| `message` | string | What happens next, to relay to the user. |
+
+## POST /api/json/v3/hosting/deleteStaging/{domain}
+
+**Delete the staging site**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+Deletes the staging site and its backups. The live site is not affected. Queued; `getStaging` returns `staging: null` once it is gone. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `STAGING_NOT_FOUND`, `OPERATION_IN_PROGRESS`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `operation` | object |  |
+| `message` | string | What happens next, to relay to the user. |
+
+## POST /api/json/v3/hosting/setStagingGate/{domain}
+
+**Set staging password protection**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+`enabled` turns the password page on or off; `password` (4-64 characters) changes it. Turning protection off makes a copy of the live site public (it stays marked not to be indexed). The response includes the current password. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `STAGING_NOT_FOUND`, `STAGING_NOT_READY`, `INVALID_INPUT`, `UPSTREAM_UNAVAILABLE`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `enabled` | boolean | no |  |
+| `password` | string | no | 4-64 characters. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `passwordProtection` | object |  |
+| `message` | string |  |
+
+## POST /api/json/v3/hosting/setStagingGuard/{domain}
+
+**Block or allow outbound email and API calls from staging**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+`blockEmail` swallows outgoing email (so a copy of the site cannot email real customers); `blockApiRequests` blocks outbound WordPress HTTP API requests (payment gateways, CRMs, webhooks). A new staging site blocks email and allows API requests. Only the fields sent change. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `STAGING_NOT_FOUND`, `STAGING_NOT_READY`, `UPSTREAM_UNAVAILABLE`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `blockEmail` | boolean | no |  |
+| `blockApiRequests` | boolean | no |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `operation` | object |  |
+| `message` | string | What happens next, to relay to the user. |
+
+## POST /api/json/v3/hosting/setStagingEnvironment/{domain}
+
+**Set the staging environment type**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+Sets WP_ENVIRONMENT_TYPE on the staging site, the signal plugins read to decide how to behave. `production` may make plugins act live (payments, email, caching); use it only to test production behaviour. Default `staging`. Supports `dryRun`. Not available with sandbox keys.
+
+**Errors:** `STAGING_NOT_FOUND`, `STAGING_NOT_READY`, `INVALID_INPUT`, `UPSTREAM_UNAVAILABLE`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | string | yes |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `operation` | object |  |
+| `message` | string | What happens next, to relay to the user. |
+
+## POST /api/json/v3/apikey/revoke
+
+**Revoke the calling API key**
+
+Permanently revokes **the key making this call**, nothing else: a key can only revoke itself, so this cannot be used to change any other key. Use it when an agent or script is finished, or suspects its key has leaked. Any key can call it, including a read-only one.
+
+Requires `"confirm": "revoke"` (without it the response says which key would be revoked). Supports `dryRun`. The key stops working within a few seconds and cannot be restored; if it belongs to an app connected over OAuth, that app is disconnected. Works for sandbox keys too.
+
+**Errors:** `CONFIRMATION_REQUIRED`, `NOT_SUPPORTED_FOR_PRODUCT` (the request was not made with an API key).
+
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `confirm` | string | yes | Must be `revoke`. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `revoked` | object |  |
+| `message` | string |  |
 
 ---
 
