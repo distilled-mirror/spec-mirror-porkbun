@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.72
+# Porkbun API v3 — v3.73
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -332,7 +332,7 @@ example.com
 myothersite.io
 ```
 
-**Permissions.** When set, the key can only call operations in its scopes: `read` (see everything, change nothing; always included), `dns` (DNS records, URL forwarding), `domains` (nameservers, contacts, auto-renew, glue, DNSSEC, transfer settings, moving to Cloudflare, SSL certificate downloads), `email` (forwarding, mailboxes), `hosting`, `purchase` (anything that charges), `funding` (adding credit, auto top-up) and `account` (webhooks, invitations, phone verification). The settings page offers **Read-only** and **Manage, but no purchases** (everything except `purchase` and `funding`) as presets. Each operation lists the scope it needs in `x-porkbun-scope`. A call outside the key's scopes fails with HTTP 403 `INSUFFICIENT_SCOPE` (with `requiredScope` and `keyScopes`) and changes nothing; a dry run of a purchase or top-up needs only `read`. `/ping` returns the key's `scopes`. Apps can ask for scopes when requesting a key (`/apikey/request`); the account holder can grant those or less. Connections from ChatGPT, Claude and other apps choose them on the consent page, and the directory endpoint (`/mcp/no-purchases`) only grants scopes that cannot spend.
+**Permissions.** When set, the key can only call operations in its scopes: `read` (see everything, change nothing; always included), `dns` (DNS records, URL forwarding), `domains` (nameservers, contacts, auto-renew, glue, DNSSEC, transfer settings, moving to Cloudflare, SSL certificate downloads), `email` (forwarding, mailboxes), `hosting`, `purchase` (anything that charges), `funding` (adding credit, auto top-up) and `account` (webhooks, invitations, phone verification). The settings page offers **Read-only** and **Manage, but no purchases** (everything except `purchase` and `funding`) as presets. Each operation lists the scope it needs in `x-porkbun-scope`. A call outside the key's scopes fails with HTTP 403 `INSUFFICIENT_SCOPE` (with `requiredScope` and `keyScopes`) and changes nothing; a dry run of a purchase or funding call (top-ups, auto top-up settings) needs only `read`. `/ping` returns the key's `scopes`. Apps can ask for scopes when requesting a key (`/apikey/request`); the account holder can grant those or less. Connections from ChatGPT, Claude and other apps choose them on the consent page, and the directory endpoint (`/mcp/no-purchases`) only grants scopes that cannot spend.
 
 **Recommended pattern for AI agents.** Hand the agent its own dedicated API key with only the permissions it needs (often **Manage, but no purchases**), restricted to the domains it actually needs to manage and (if you know the agent's egress IP) to that IP. The blast radius of an accidentally-leaked key drops to `these operations on these domains from this IP` instead of `anything on the account`.
 
@@ -487,6 +487,10 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 
 ## Changelog
 
+### v3.73
+
+- **Coupons in pricing.** `/pricing/get` now fills `coupons` with the public codes that work at checkout: a registration code where one applies, and a transfer code. Read them from here instead of hardcoding them.
+
 ### v3.72
 
 - **`GET /domain/getGlue` has one shape, plus a typed `glue` list.** `hosts` is always an array (it was `null` with no glue) and every address object carries both `v4` and `v6`; the sandbox now matches live (it returned a flat IP list). New `glue`: the same data as `{host, v4, v6}` objects, which generated clients can type without an overlay. The spec now documents `/dns/create`'s `id` as the integer it has always returned.
@@ -541,7 +545,7 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 ### v3.60
 
 - **Asking for permissions when a key is created.** `/apikey/request` takes optional `scopes`; the approval page lists them in plain words, the account holder can grant those or less (never more), and the key gets what they granted. Connecting ChatGPT, Claude or another app through the hosted connector now asks which permissions the connection gets, and the directory endpoint (`/mcp/no-purchases`) can only grant permissions without `purchase` and `funding`, so its "no purchases" promise is enforced by the key itself.
-- **Permission scopes on API keys.** A key can be limited to `read` (see everything, change nothing), or to any of `dns`, `domains`, `email`, `hosting`, `purchase`, `funding` and `account` on top of it; "Manage, but no purchases" is every scope except `purchase` and `funding`. Existing keys keep full access. Each operation lists the scope it needs in `x-porkbun-scope`; a call outside the key's permissions returns 403 `INSUFFICIENT_SCOPE` with `requiredScope` and `keyScopes`, and nothing changes. A dry run of a purchase or top-up needs only `read`. `/ping` returns the key's `scopes`. Set them in API Access on porkbun.com.
+- **Permission scopes on API keys.** A key can be limited to `read` (see everything, change nothing), or to any of `dns`, `domains`, `email`, `hosting`, `purchase`, `funding` and `account` on top of it; "Manage, but no purchases" is every scope except `purchase` and `funding`. Existing keys keep full access. Each operation lists the scope it needs in `x-porkbun-scope`; a call outside the key's permissions returns 403 `INSUFFICIENT_SCOPE` with `requiredScope` and `keyScopes`, and nothing changes. A dry run of a purchase or funding call (top-ups, auto top-up settings) needs only `read`. `/ping` returns the key's `scopes`. Set them in API Access on porkbun.com.
 - **First registrations over the API.** An account's first domain registration can be made over the API; the website is not required first. `ID_VERIFICATION_REQUIRED` and `NEW_ACCOUNT_LIMIT` are reserved for checks on new accounts that are measured but not currently enforced.
 
 ### v3.59
