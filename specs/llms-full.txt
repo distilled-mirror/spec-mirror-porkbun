@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.73
+# Porkbun API v3 — v3.74
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -136,7 +136,9 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 | `INVOICE_PDF_FAILED` | The invoice PDF could not be generated; retry, or use `GET /account/invoice/{orderId}`. HTTP 500. |
 
 | `MISSING_PARAMETER` | A required field or path segment is absent; the message names it |
-| `INSUFFICIENT_SCOPE` | HTTP 403: the API key's permissions (`keyScopes`) do not include the one this call needs (`requiredScope`). Nothing was changed. The account holder can change the key's permissions in API Access |
+| `INSUFFICIENT_SCOPE` | HTTP 403: the API key's permissions (`keyScopes`) do not include the one this call needs (`requiredScope`). Nothing was changed. The account holder can change the key's permissions in API Access. For a key made by site sharing (`keyScopes: ["site"]`) the call is outside running that one website; ask the account holder |
+| `SHARE_ACCESS_ENDED` | HTTP 403: a site-share key reached the end of the `accessHours` it was shared for and no longer works. Ask the person who shared the site to share it again |
+| `SHARE_NOT_FOUND` | HTTP 404 from `/apikey/claim`: the site-share link or code was already used, revoked, expired or mistyped. Ask the person who shared the site for a new one |
 | `ID_VERIFICATION_REQUIRED` | `/domain/create`: the account holder must verify their identity at https://porkbun.com/account/idVerification before this registration (or pay it by card). Nothing was charged. Not currently enforced |
 | `NEW_ACCOUNT_LIMIT` | `/domain/create`: a new account reached the number of API registrations allowed in its first days (`retryAfter` seconds until it lifts). Nothing was charged. Not currently enforced |
 | `VERIFICATION_REQUIRED` | The account's email and phone must be verified first (both can be verified over the API: `/account/verifyEmail/send` and `/account/verifyPhone/send`, then `/confirm`); nothing was charged |
@@ -332,7 +334,7 @@ example.com
 myothersite.io
 ```
 
-**Permissions.** When set, the key can only call operations in its scopes: `read` (see everything, change nothing; always included), `dns` (DNS records, URL forwarding), `domains` (nameservers, contacts, auto-renew, glue, DNSSEC, transfer settings, moving to Cloudflare, SSL certificate downloads), `email` (forwarding, mailboxes), `hosting`, `purchase` (anything that charges), `funding` (adding credit, auto top-up) and `account` (webhooks, invitations, phone verification). The settings page offers **Read-only** and **Manage, but no purchases** (everything except `purchase` and `funding`) as presets. Each operation lists the scope it needs in `x-porkbun-scope`. A call outside the key's scopes fails with HTTP 403 `INSUFFICIENT_SCOPE` (with `requiredScope` and `keyScopes`) and changes nothing; a dry run of a purchase or funding call (top-ups, auto top-up settings) needs only `read`. `/ping` returns the key's `scopes`. Apps can ask for scopes when requesting a key (`/apikey/request`); the account holder can grant those or less. Connections from ChatGPT, Claude and other apps choose them on the consent page, and the directory endpoint (`/mcp/no-purchases`) only grants scopes that cannot spend.
+**Permissions.** When set, the key can only call operations in its scopes: `read` (see everything, change nothing; always included), `dns` (DNS records, URL forwarding), `domains` (nameservers, contacts, auto-renew, glue, DNSSEC, transfer settings, moving to Cloudflare, SSL certificate downloads), `email` (forwarding, mailboxes), `hosting`, `purchase` (anything that charges), `funding` (adding credit, auto top-up) and `account` (webhooks, invitations, phone verification). A key made by **site sharing** (`/apikey/share`) has a ninth permission, `site`, on its own: it can run one domain's website (the hosting and Link in Bio calls listed for it) and nothing account-wide, not even `read`. The settings page offers **Read-only** and **Manage, but no purchases** (everything except `purchase` and `funding`) as presets. Each operation lists the scope it needs in `x-porkbun-scope`. A call outside the key's scopes fails with HTTP 403 `INSUFFICIENT_SCOPE` (with `requiredScope` and `keyScopes`) and changes nothing; a dry run of a purchase or funding call (top-ups, auto top-up settings) needs only `read`. `/ping` returns the key's `scopes`. Apps can ask for scopes when requesting a key (`/apikey/request`); the account holder can grant those or less. Connections from ChatGPT, Claude and other apps choose them on the consent page, and the directory endpoint (`/mcp/no-purchases`) only grants scopes that cannot spend.
 
 **Recommended pattern for AI agents.** Hand the agent its own dedicated API key with only the permissions it needs (often **Manage, but no purchases**), restricted to the domains it actually needs to manage and (if you know the agent's egress IP) to that IP. The blast radius of an accidentally-leaked key drops to `these operations on these domains from this IP` instead of `anything on the account`.
 
@@ -486,6 +488,10 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.74
+
+- **Site sharing.** `POST /apikey/share` lets the account holder hand one domain's website to someone else and their AI agent: approved on porkbun.com, then a one-time link, QR code, share code and handoff prompt. The other side claims with `POST /apikey/claim` (no key needed) or the share code at OAuth sign-in, and gets a key with the new `site` permission, limited to that domain. `GET /apikey/shares`, `POST /apikey/revokeShare`. New error code `SHARE_NOT_FOUND`.
 
 ### v3.73
 
@@ -1995,6 +2001,8 @@ Response fields (BasicResponse):
 
 Retrieve all glue records (host objects) registered under the domain. Supports both GET (with header auth) and POST (with body or header auth).
 
+Read `glue`: one `{host, v4, v6}` object per host, with both address lists always present (empty when none). `hosts` holds the same data as `[hostname, {v4, v6}]` pairs for older clients. Both are empty arrays when the domain has no glue. The sandbox returns the same shape.
+
 **Key permission needed:** `read`
 
 | Parameter | In | Required | Description |
@@ -2021,6 +2029,8 @@ Response fields:
 **Get glue records**
 
 Retrieve all glue records (host objects) registered under the domain. Supports both GET (with header auth) and POST (with body or header auth).
+
+Read `glue`: one `{host, v4, v6}` object per host, with both address lists always present (empty when none). `hosts` holds the same data as `[hostname, {v4, v6}]` pairs for older clients. Both are empty arrays when the domain has no glue. The sandbox returns the same shape.
 
 **Key permission needed:** `read`
 
@@ -3178,11 +3188,11 @@ Response fields (BasicResponse):
 
 ## GET /api/json/v3/hosting/plans
 
-**List provisionable hosting plans (static + WordPress)**
+**List the hosting plans you can buy**
 
-**Applies to:** Both products.
+**Applies to:** Secure Static Hosting, Cloud for WordPress and paid Link in Bio.
 
-List the hosting plans that can be provisioned via the API, with price, interval, trial length, and features. Pass a row's `plan` to `/hosting/create` and its `price` (cents) as `acknowledgedCost`. Currently Secure Static Hosting; more products are added over time. Also available via POST. Includes both Secure Static Hosting and Cloud for WordPress (managed WordPress) plans; the `product` field distinguishes them.
+Lists the plans `/hosting/create` sells, with price, interval, trial length and features. `product` tells them apart (`secureStaticHosting`, `cloudWordPress`, and `managedLinks` for Link in Bio). To buy one, send the row's `sku` to `/hosting/create` and its `price` (cents) as `acknowledgedCost`. Also available via POST.
 
 **Key permission needed:** `read`
 
@@ -3200,17 +3210,24 @@ Response fields:
 
 ## POST /api/json/v3/hosting/create/{domain}
 
-**Provision hosting — a static site or a WordPress site**
+**Buy a hosting plan (static, WordPress or paid Link in Bio)**
 
-**Applies to:** Both products — the `sku` decides which.
+**Applies to:** Secure Static Hosting, Cloud for WordPress and paid Link in Bio. The `sku` decides which; list them with `/hosting/plans`.
 
-Provision hosting (Secure Static Hosting or Cloud for WordPress) for a domain in the account. The FIRST provision for a domain starts a **15-day free trial** ($0 now) that **auto-renews** at the plan price when the trial ends; a re-provision after deprovision is charged immediately, to account credit or directly in USDC with `"payWith": "usdc"` (HTTP 402, then repeat with `PAYMENT-SIGNATURE`; kept as account credit if provisioning fails) or by card with `"payWith": "card"` (a hold, captured only if provisioning succeeds), and counts toward the monthly API spend limit (one free trial per domain). Provisioning **switches the domain to Porkbun nameservers** if it isn't already — pass `agreeToNameserverChange: true` to allow that. Supports `dryRun`. Remote setup can be async: `status` may be `PENDING` — poll `/hosting/get` until `ACTIVE` before deploying.
+Buys a hosting plan for a domain in the account. Send the plan's `sku`, and its `price` from `/hosting/plans` as `acknowledgedCost`, which confirms the person was told the price.
 
-**Cloud for WordPress:** pass a `CLOUDWORDPRESS…` sku to provision a managed WordPress site instead of static hosting. The file endpoints (deploy/files/deleteFile/makeDir) do not apply — manage the site through WordPress, using `/hosting/createWpCredentials/{domain}` for REST API credentials.
+**Price and trial:** the first time a domain gets a product, it starts with a **15-day free trial** ($0 now) and then **auto-renews** at the plan price. One trial per domain per product: buying the same product again after cancelling is charged immediately, to account credit, in USDC with `"payWith": "usdc"` (HTTP 402, then repeat with `PAYMENT-SIGNATURE`; kept as account credit if provisioning fails), or by card with `"payWith": "card"` (a hold, captured only if provisioning succeeds). Charges count toward the monthly API spend limit.
 
-**Rate limit:** 10 provisions per account per hour (`dryRun` calls are free).
+**Nameservers:** the domain is switched to Porkbun nameservers if it isn't on them already; send `agreeToNameserverChange: true` to allow that.
 
-**Link in Bio** (`PIXIELINKSM1` monthly, `PIXIELINKSY1` yearly): a paid Link in Bio page. Over a free Link in Bio page (most .com domains registered at Porkbun have one) this upgrades it and keeps the title, links and settings; the response says so. The free Link in Bio and the free WordPress preview that come with a domain never block a purchase: another product replaces them. Edit the page with the `/linkinbio` endpoints.
+**By product:**
+- **Secure Static Hosting** (`PIXIESECURESTATIC…`): setup can take a moment; if `status` is `PENDING`, poll `/hosting/get` until `ACTIVE`, then upload with `/hosting/deploy`.
+- **Cloud for WordPress** (`CLOUDWORDPRESS…`): a managed WordPress site. Manage it through WordPress, with `/hosting/createWpCredentials` for REST API credentials; the file endpoints don't apply.
+- **Link in Bio** (`PIXIELINKSM1` monthly, `PIXIELINKSY1` yearly): a paid page of links (1000 links and every feature). Over a free Link in Bio page (most .com domains registered at Porkbun have one) it upgrades the page and keeps its title, links and settings. For a free page, use `/linkinbio/create` instead. Edit the page with the `/linkinbio` endpoints.
+
+The free Link in Bio page and the free WordPress preview that come with a domain never block a purchase: the product you buy replaces them.
+
+Supports `dryRun`. **Rate limit:** 10 purchases per account per hour (`dryRun` calls are free).
 
 **Key permission needed:** `purchase`
 
@@ -3223,8 +3240,8 @@ Request body fields:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `sku` | string | yes | The hosting plan SKU to provision. Discover the provisionable SKUs (and each one’s price/interval/trial) via GET /hosting/plans, then pass the row’s `sku`. Currently Secure Static Hosting: PIXIESECURESTATICM2 ($3.00/mo) or PIXIESECURESTATICY2 ($30.00/yr). |
-| `acknowledgedCost` | integer | yes | Echo the plan price in cents (300 monthly / 3000 yearly) to confirm the account holder understands the auto-renew / charge. Mismatch returns COST_ACKNOWLEDGMENT_REQUIRED. |
+| `sku` | string | yes | The hosting plan SKU to provision. Discover the provisionable SKUs (and each one’s price/interval/trial) via GET /hosting/plans, then pass the row’s `sku`. Families: Secure Static Hosting `PIXIESECURESTATIC…`, Cloud for WordPress `CLOUDWORDPRESS…`, and paid Link in Bio `PIXIELINKSM1` ($3/month) or `PIXIELINKSY1` ($30/year). |
+| `acknowledgedCost` | integer | yes | The plan's `price` in cents, from the same `/hosting/plans` row as the `sku` (e.g. 300 for `PIXIELINKSM1` or `PIXIESECURESTATICM2`, 1200 for `CLOUDWORDPRESSM1`), to confirm the account holder understands the auto-renew / charge. Mismatch returns COST_ACKNOWLEDGMENT_REQUIRED. |
 | `agreeToTerms` | string | yes |  |
 | `agreeToNameserverChange` | boolean | no | Required (true) when the domain is not already on Porkbun nameservers — provisioning will switch them. |
 | `payWith` | string | no | Optional. `"usdc"` pays for this purchase directly in USDC on Base over x402 instead of from account credit. The first call answers HTTP 402 (`PAYMENT_REQUIRED`) with Coinbase's terms in the `PAYMENT-REQUIRED` header and charges nothing; an x402 client pays and repeats the same request with a `PAYMENT-SIGNATURE` header, and the purchase completes in that call. If it then fails, the payment stays on the account as account credit; it is not sent back to the wallet. If your wallet pays URLs itself instead, pay the 402's `x402Url` (or have a person pay `payUrl`) and repeat the request with `usdcCheckoutId`. See the guide: https://porkbun.com/llms/guides/pay-with-usdc-x402. `"card"` pays by card through a Stripe Link agent wallet over MPP instead, with a real hold: the 402 carries a single-use `payUrl` and a `cardPaymentId`; pay the link (it authorizes, not charges), then repeat with `cardPaymentId`; the hold is captured if the purchase succeeds and released if it fails. Guide: https://porkbun.com/llms/guides/pay-with-card-mpp |
@@ -3235,7 +3252,7 @@ Request body fields:
 ```bash
 curl -X POST https://api.porkbun.com/api/json/v3/hosting/create/example.com \
   -H 'Content-Type: application/json' \
-  -d '{"apikey":"pk1_...","secretapikey":"sk1_...","plan":"monthly","acknowledgedCost":300,"agreeToTerms":"yes"}'
+  -d '{"apikey":"pk1_...","secretapikey":"sk1_...","sku":"PIXIELINKSM1","acknowledgedCost":300,"agreeToTerms":"yes"}'
 ```
 
 Response fields:
@@ -3251,13 +3268,13 @@ Response fields:
 
 ## GET /api/json/v3/hosting/get/{domain}
 
-**Get hosting status (either product)**
+**Get the hosting on a domain**
 
-**Applies to:** Both products.
+**Applies to:** Secure Static Hosting, Cloud for WordPress and Link in Bio.
 
-Return the Secure Static Hosting status for a domain (plan, server, trial, expiry, auto-renew), or `hosting: null` if none. Also available via POST.
+Returns the hosting on a domain (`product`, plan, status, trial, expiry, auto-renew), or `hosting: null` if there is none. Also available via POST.
 
-For a live Cloud for WordPress site, `wordpress.site` adds what the hosting page on porkbun.com shows: PHP version (and the versions available), WordPress version setting, SSL, storage used, search visibility, staging, and the latest background jobs (restores, factory resets, site copies). Reading it takes a couple of seconds, because it asks WP Cloud.
+For a live Cloud for WordPress site, `wordpress.site` adds what the hosting page on porkbun.com shows: PHP version (and the versions available), WordPress version setting, SSL, storage used, search visibility, staging, and the latest background jobs (restores, factory resets, site copies). Reading it takes a couple of seconds, because it asks WP Cloud. For a Link in Bio page's content, use `/linkinbio/get`.
 
 **Key permission needed:** `read`
 
@@ -3281,7 +3298,7 @@ Response fields:
 
 **Upload site files (static hosting only)**
 
-**Applies to:** Secure Static Hosting only — a WordPress site returns `NOT_SUPPORTED_FOR_PRODUCT`; manage its content through WordPress instead.
+**Applies to:** Secure Static Hosting only — a WordPress site or Link in Bio page returns `NOT_SUPPORTED_FOR_PRODUCT`; manage its content through WordPress instead.
 
 Upload static files to the domain's Secure Static Hosting space. Send `files` as an array of `{ path, content }` where `content` is base64. Total payload ≤ 10 MB per request (split larger sites across calls). Only static-web file types are accepted (html/css/js/images/fonts/…); server-executable types are rejected. Hosting must be ACTIVE. A file’s `path` may include directories (e.g. `assets/css/style.css`); any missing parent directories are created automatically. Paths are sanitized (no traversal/control chars) and the filename extension must be an allowed static-web type.
 
@@ -3316,7 +3333,7 @@ Response fields:
 
 **List site files (static hosting only)**
 
-**Applies to:** Secure Static Hosting only — a WordPress site returns `NOT_SUPPORTED_FOR_PRODUCT`.
+**Applies to:** Secure Static Hosting only — a WordPress site or Link in Bio page returns `NOT_SUPPORTED_FOR_PRODUCT`.
 
 List file/directory names under an optional `path` in the domain's hosting space. Also available via POST (send `path` in the body).
 
@@ -3338,7 +3355,7 @@ Response fields:
 
 **Delete a site file (static hosting only)**
 
-**Applies to:** Secure Static Hosting only — a WordPress site returns `NOT_SUPPORTED_FOR_PRODUCT`.
+**Applies to:** Secure Static Hosting only — a WordPress site or Link in Bio page returns `NOT_SUPPORTED_FOR_PRODUCT`.
 
 Delete a file or directory at `path` in the domain's hosting space. Idempotent: a path that is already gone returns `SUCCESS` with `alreadyAbsent: true`. A directory that still has files returns `HOSTING_DIR_NOT_EMPTY` with its `contents`, unless `recursive: true` is sent, which deletes it with everything inside (the site root can never be deleted).
 
@@ -3365,13 +3382,17 @@ Response fields:
 
 ## POST /api/json/v3/hosting/delete/{domain}
 
-**Deprovision hosting (either product)**
+**Cancel a hosting plan**
 
-**Applies to:** Both products.
+**Applies to:** Secure Static Hosting, Cloud for WordPress and paid Link in Bio.
 
-Deprovision (cancel) Secure Static Hosting for a domain; teardown is scheduled and completed by Porkbun. Note: the domain has already used its one free trial, so provisioning it again later will be charged (no second free trial).
+Cancels the hosting on a domain now. To let a plan run to the end of its term instead, turn auto-renew off with `/hosting/updateAutoRenew`.
 
-**Link in Bio:** cancelling a paid plan moves the page to the free plan (50 links, fewer features); the page and its content stay. A free page cannot be cancelled here (`NOT_SUPPORTED_FOR_PRODUCT`).
+**By product:**
+- **Secure Static Hosting and Cloud for WordPress:** the site is taken down (Porkbun schedules the teardown). The domain has used its free trial, so buying the same product again later is charged.
+- **Link in Bio:** a paid page is not taken down. It moves to the free plan (50 links, without scheduling, animation, passcode protection or analytics IDs) and keeps its content. A free page has nothing to cancel and returns `NOT_SUPPORTED_FOR_PRODUCT`; free pages can't be turned off through the API.
+
+**Errors:** `HOSTING_NOT_FOUND`, `NOT_SUPPORTED_FOR_PRODUCT`.
 
 **Key permission needed:** `hosting`
 
@@ -4897,7 +4918,7 @@ Response fields:
 
 **Create a directory (static hosting only)**
 
-**Applies to:** Secure Static Hosting only — a WordPress site returns `NOT_SUPPORTED_FOR_PRODUCT`.
+**Applies to:** Secure Static Hosting only — a WordPress site or Link in Bio page returns `NOT_SUPPORTED_FOR_PRODUCT`.
 
 Create a directory (and any missing parent directories) at `path` in the domain’s hosting space. Deploy already auto-creates directories in a file’s path, so use this to stand up an empty directory explicitly. Path is sanitized segment-by-segment (no traversal / control chars).
 
@@ -5811,7 +5832,7 @@ Response fields (LinkInBioResponse):
 
 **Turn hosting auto-renew on or off**
 
-**Applies to:** every paid hosting product (Secure Static Hosting, Cloud for WordPress, Link in Bio).
+**Applies to:** Secure Static Hosting, Cloud for WordPress and paid Link in Bio.
 
 The same switch as on the hosting page on porkbun.com. Off: the plan stays active until `expireDate` and is not charged again (a trial ends without a charge); after that the hosting is removed, except a paid Link in Bio page, which moves to the free plan with its content kept. On: it renews before `expireDate` at the plan price. `GET /hosting/get` shows the current setting (`autoRenew`).
 
@@ -6402,7 +6423,7 @@ Response fields:
 
 Permanently revokes **the key making this call**, nothing else: a key can only revoke itself, so this cannot be used to change any other key. Use it when an agent or script is finished, or suspects its key has leaked. Any key can call it, including a read-only one.
 
-Requires `"confirm": "revoke"` (without it the response says which key would be revoked). Supports `dryRun`. The key stops working within a few seconds and cannot be restored; if it belongs to an app connected over OAuth, that app is disconnected. Works for sandbox keys too.
+Requires `"confirm": "revoke"` (without it the response says which key would be revoked). Supports `dryRun`. The key stops working within a few seconds and cannot be restored; if it belongs to an app connected over OAuth, that app is disconnected. Works for sandbox keys too. A key made by site sharing can call it to give its access back; the share is then recorded as revoked and the account holder is emailed.
 
 **Errors:** `CONFIRMATION_REQUIRED`, `NOT_SUPPORTED_FOR_PRODUCT` (the request was not made with an API key).
 
@@ -6425,6 +6446,135 @@ Response fields:
 | `status` | string |  |
 | `revoked` | object |  |
 | `message` | string |  |
+
+## POST /api/json/v3/apikey/share
+
+**Share one domain's website with someone (owner approves)**
+
+Starts sharing one domain's website with another person, so they and the AI agent they use can run it without the account. **Nothing is granted by this call.** It returns an `approveUrl` that the account holder opens on porkbun.com: the page shows exactly what will be shared, and approving there (logged in, after the usual re-verify) creates the share link, a QR code, a share code and a handoff prompt for the other person's agent. After approval, `GET /apikey/shares` returns the same bundle.
+
+The other person claims it once, within `claimHours` of approval. Set `accessHours` to make the access itself end on its own (e.g. 48), counted from the claim; leave it out for access until revoked. They claim it: their agent calls `/apikey/claim`, or they connect the Claude app or ChatGPT with the share code. Either way a new key is made on this account with the `site` permission alone, limited to the domain: the other person (and their AI agent) can run that one website: WordPress (via `/hosting/createWpCredentials`), static files, Link in Bio edits, backups and restores, staging, PHP and WordPress versions, SSL and search visibility. They cannot buy anything, cancel the hosting or change auto-renew, change DNS, turn on a Link in Bio page, or see the rest of the account (no other domains, balance or invoices). The account holder is emailed when it is claimed, the key shows as "Share: <name>" in API Access, and `/apikey/revokeShare` or deleting that key ends it.
+
+The domain must have hosting or a Link in Bio page. A key that was itself shared cannot share onward. Not available with sandbox keys. Supports `dryRun`.
+
+**Errors:** `INVALID_INPUT`, `DOMAIN_NOT_FOUND`, `HOSTING_NOT_FOUND`, `DOMAIN_NOT_ALLOWED`, `INSUFFICIENT_SCOPE`, `RATE_LIMITED` (20 open shares), `SANDBOX_UNSUPPORTED`.
+
+**Key permission needed:** `account`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `domain` | string | yes | The domain whose website to share. |
+| `sharedWith` | string | yes | Who it is for (1-60 characters), e.g. `Sarah`. Shown on the approval page and to the other person. |
+| `claimHours` | integer | no | How long the link works once approved (the window to claim it). |
+| `accessHours` | integer | no | Optional: how long the access itself lasts, in hours, counted from when they connect (claim). Leave out for access until it is revoked. When it runs out the key stops working and the share shows `EXPIRED`; calls get `SHARE_ACCESS_ENDED`. Shown to the account holder on the approval page. |
+| `dryRun` | boolean | no |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `shareId` | integer |  |
+| `domain` | string |  |
+| `sharedWith` | string |  |
+| `approveUrl` | string | For the account holder to open and approve on porkbun.com. Only returned here. |
+| `expires` | string | Approval deadline (24 hours). |
+| `message` | string |  |
+| `accessHours` | integer |  |
+
+## GET /api/json/v3/apikey/shares
+
+**List site shares**
+
+This account's site shares (`/apikey/share`), newest first: `status` is `PENDING` (waiting for the account holder's approval), `ACTIVE` (approved, link not used), `CLAIMED` (the other person connected), `REVOKED` or `EXPIRED`. For an `ACTIVE` share, keys with full access or the `account` permission also get `shareUrl`, `qrCodeUrl`, `shareCode` and `handoffPrompt` to pass on; other keys see the share without them. A domain-limited key sees only its domains' shares. Also available via GET.
+
+**Key permission needed:** `read`
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `shares` | object[] |  |
+
+## POST /api/json/v3/apikey/shares
+
+**List site shares**
+
+This account's site shares (`/apikey/share`), newest first: `status` is `PENDING` (waiting for the account holder's approval), `ACTIVE` (approved, link not used), `CLAIMED` (the other person connected), `REVOKED` or `EXPIRED`. For an `ACTIVE` share, keys with full access or the `account` permission also get `shareUrl`, `qrCodeUrl`, `shareCode` and `handoffPrompt` to pass on; other keys see the share without them. A domain-limited key sees only its domains' shares. Also available via GET.
+
+**Key permission needed:** `read`
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `shares` | object[] |  |
+
+## POST /api/json/v3/apikey/revokeShare
+
+**Revoke a site share**
+
+Ends a site share by `id` (from `/apikey/shares`). An unclaimed link and code stop working; if the other person already connected, their key is disabled and their app or agent loses access within seconds. Supports `dryRun`.
+
+**Errors:** `NOT_FOUND`, `DOMAIN_NOT_ALLOWED`, `INSUFFICIENT_SCOPE`.
+
+**Key permission needed:** `account`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `id` | integer | yes |  |
+| `dryRun` | boolean | no |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `id` | integer |  |
+| `message` | string |  |
+
+## POST /api/json/v3/apikey/claim
+
+**Claim a site share (no API key needed)**
+
+Called by the agent of the person a website was shared with, using the `shareToken` from the share link or handoff prompt. **No API key needed.** Works once, while the share is approved and unexpired: it returns a new key pair, made on the sharing account, with the `site` permission alone and limited to the shared domain: the other person (and their AI agent) can run that one website: WordPress (via `/hosting/createWpCredentials`), static files, Link in Bio edits, backups and restores, staging, PHP and WordPress versions, SSL and search visibility. They cannot buy anything, cancel the hosting or change auto-renew, change DNS, turn on a Link in Bio page, or see the rest of the account (no other domains, balance or invoices). Store the secret immediately; it is not shown again. Then start with `GET /hosting/get/{domain}`. To give the access back later, the same key calls `/apikey/revoke` (the account holder is emailed). Calls outside that return `INSUFFICIENT_SCOPE` or `DOMAIN_NOT_ALLOWED`.
+
+People using the Claude app or ChatGPT don't call this: they enter the share code when connecting the Porkbun connector. Rate limited to 20 calls per IP per hour.
+
+**Errors:** `INVALID_INPUT`, `SHARE_NOT_FOUND` (used, revoked, expired or wrong; ask for a new one), `RATE_LIMIT_EXCEEDED`.
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `shareToken` | string | yes | The token from the share link (the part after /share/) or the handoff prompt. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `apikey` | string |  |
+| `secretapikey` | string | Returned once. |
+| `domain` | string |  |
+| `permissions` | string |  |
+| `product` | string | `cloudWordPress`, `secureStaticHosting` or `managedLinks`. |
+| `message` | string |  |
+| `accessUntil` | string | When this key stops working, if the share has an access length; null = until revoked. |
 
 ---
 
