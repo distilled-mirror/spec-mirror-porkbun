@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.74
+# Porkbun API v3 — v3.75
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -137,6 +137,8 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 
 | `MISSING_PARAMETER` | A required field or path segment is absent; the message names it |
 | `INSUFFICIENT_SCOPE` | HTTP 403: the API key's permissions (`keyScopes`) do not include the one this call needs (`requiredScope`). Nothing was changed. The account holder can change the key's permissions in API Access. For a key made by site sharing (`keyScopes: ["site"]`) the call is outside running that one website; ask the account holder |
+| `WP_REST_ERROR` | `/hosting/wpRequest`: WordPress refused or failed the call. `httpStatus` and `data` carry WordPress's own code and message; a 403 as the editor usually means the route needs `asAdministrator` |
+| `WP_RESPONSE_TOO_LARGE` | `/hosting/wpRequest`: the answer was over about 400 KB. Narrow it with `_fields`, `per_page` or a single id |
 | `SHARE_ACCESS_ENDED` | HTTP 403: a site-share key reached the end of the `accessHours` it was shared for and no longer works. Ask the person who shared the site to share it again |
 | `SHARE_NOT_FOUND` | HTTP 404 from `/apikey/claim`: the site-share link or code was already used, revoked, expired or mistyped. Ask the person who shared the site for a new one |
 | `ID_VERIFICATION_REQUIRED` | `/domain/create`: the account holder must verify their identity at https://porkbun.com/account/idVerification before this registration (or pay it by card). Nothing was charged. Not currently enforced |
@@ -488,6 +490,11 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.75
+
+- **Edit WordPress content without credentials.** `POST /hosting/wpRequest/{domain}` runs one WordPress REST API call inside a Cloud for WordPress site (as the `porkbun-agent` editor, or the administrator with `acknowledgeFullAccess`), and `POST /hosting/wpUploadMedia/{domain}` adds an image from a URL or base64. No application password is created or returned. Site-share keys can use both. New error codes `WP_REST_ERROR`, `WP_RESPONSE_TOO_LARGE`.
+- `/apikey/share` takes optional `accessHours` (the access ends on its own that long after the claim; `SHARE_ACCESS_ENDED`).
 
 ### v3.74
 
@@ -3222,7 +3229,7 @@ Buys a hosting plan for a domain in the account. Send the plan's `sku`, and its 
 
 **By product:**
 - **Secure Static Hosting** (`PIXIESECURESTATIC…`): setup can take a moment; if `status` is `PENDING`, poll `/hosting/get` until `ACTIVE`, then upload with `/hosting/deploy`.
-- **Cloud for WordPress** (`CLOUDWORDPRESS…`): a managed WordPress site. Manage it through WordPress, with `/hosting/createWpCredentials` for REST API credentials; the file endpoints don't apply.
+- **Cloud for WordPress** (`CLOUDWORDPRESS…`): a managed WordPress site. Edit its content with `/hosting/wpRequest` and `/hosting/wpUploadMedia` (no WordPress password needed), or mint REST API credentials with `/hosting/createWpCredentials` for your own code; the file endpoints don't apply.
 - **Link in Bio** (`PIXIELINKSM1` monthly, `PIXIELINKSY1` yearly): a paid page of links (1000 links and every feature). Over a free Link in Bio page (most .com domains registered at Porkbun have one) it upgrades the page and keeps its title, links and settings. For a free page, use `/linkinbio/create` instead. Edit the page with the `/linkinbio` endpoints.
 
 The free Link in Bio page and the free WordPress preview that come with a domain never block a purchase: the product you buy replaces them.
@@ -5052,9 +5059,101 @@ Credential-free. Mirror any real endpoint path after `/mock` (e.g. `/mock/domain
 | `path` | path | yes | The real endpoint path to mock, e.g. `domain/listAll`. |
 | `status` | query | no | Set to `error` to return the error-response shape. |
 
+## POST /api/json/v3/hosting/wpRequest/{domain}
+
+**Edit a WordPress site: one REST API call, run inside the site**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+The way to change a WordPress site's content without credentials: one WordPress REST API call, e.g. `GET /wp/v2/pages` (list), `GET /wp/v2/pages/12` with `{"context": "edit"}` (raw block markup to edit), `POST /wp/v2/pages/12` with `{"content": "..."}` (update), `POST /wp/v2/posts` (create). Runs inside the site: WordPress's own REST handling is called in-process over WP-CLI, as a WordPress user, so no application password is created, stored or returned, and it works whatever the domain's DNS points at. By default it acts as the dedicated `porkbun-agent` editor (created on first use): pages, posts, media, comments, menus. Site settings (title, tagline, homepage), plugins, themes and users need an administrator: send `asAdministrator` and `acknowledgeFullAccess`. Each call takes a few seconds.
+
+The response is WordPress's own: `httpStatus`, `data` (its JSON), and `total`/`totalPages` on lists. A WordPress error (4xx/5xx) returns `status: ERROR`, `code: WP_REST_ERROR`, with WordPress's code and message in `data`. Answers over about 400 KB return `WP_RESPONSE_TOO_LARGE`: narrow them with `_fields`, `per_page` or a single id. Writes support `dryRun`. Rate limit: 600 calls per account per hour. Site-share keys (`site`) can use it.
+
+Agents that make their own HTTP requests can instead mint credentials with `/hosting/createWpCredentials` and call `https://{domain}/wp-json/` directly.
+
+**Errors:** `WP_REST_ERROR`, `WP_RESPONSE_TOO_LARGE`, `FULL_ACCESS_ACKNOWLEDGMENT_REQUIRED`, `WP_CLI_FAILED` (the site did not answer), `INVALID_INPUT`, `HOSTING_NOT_FOUND`, `PREVIEW_SITE_NOT_SUPPORTED`, `NOT_SUPPORTED_FOR_PRODUCT`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `method` | string | no |  |
+| `path` | string | yes | REST route without /wp-json, e.g. `/wp/v2/pages/12`. No query string. |
+| `query` | object | no | Query parameters, e.g. `{"per_page": 10, "context": "edit", "_fields": "id,title"}`. |
+| `body` | object | no | JSON body for POST/PUT/PATCH, up to 1 MB. |
+| `embed` | boolean | no | Include linked resources (`_embed`). |
+| `asAdministrator` | boolean | no | Act as the site's administrator instead of the `porkbun-agent` editor. Needed for site settings, plugins, themes and users. Requires acknowledgeFullAccess. |
+| `acknowledgeFullAccess` | boolean | no | Confirms administrator-level changes were agreed. |
+| `dryRun` | boolean | no |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `httpStatus` | integer |  |
+| `actsAs` | string | The WordPress user it ran as. |
+| `data` |  | WordPress's JSON response. |
+| `total` | integer |  |
+| `totalPages` | integer |  |
+| `code` | string |  |
+| `message` | string |  |
+
+## POST /api/json/v3/hosting/wpUploadMedia/{domain}
+
+**Add an image or file to a WordPress site's media library**
+
+**Applies to:** Cloud for WordPress (not the free preview).
+
+Upload from a public `url` (WordPress downloads it, refusing private and local addresses) or from base64 `data` with a `filename`, up to about 10 MB. Returns the attachment `id` (use as `featured_media` on a post or page) and its `url` (use in content). Runs inside the site: WordPress's own REST handling is called in-process over WP-CLI, as a WordPress user, so no application password is created, stored or returned, and it works whatever the domain's DNS points at. By default it acts as the dedicated `porkbun-agent` editor (created on first use): pages, posts, media, comments, menus. Site settings (title, tagline, homepage), plugins, themes and users need an administrator: send `asAdministrator` and `acknowledgeFullAccess`. Each call takes a few seconds.
+
+Rate limit: 200 uploads per account per hour. Supports `dryRun`. Site-share keys (`site`) can use it.
+
+**Errors:** `INVALID_INPUT`, `WP_CLI_FAILED` (with WordPress's reason, e.g. a file type it does not allow), `FULL_ACCESS_ACKNOWLEDGMENT_REQUIRED`, `HOSTING_NOT_FOUND`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+| `Idempotency-Key` | header | no | Optional, recommended on every purchase and write. Send a unique value (a UUID) per intended operation. Repeating the request with the same key and an identical body within 24 hours returns the original response instead of doing it again, so a retry after a timeout cannot double-charge or double-apply. The same key with a different body returns 409 IDEMPOTENCY_KEY_MISMATCH; while the first request is still running, 409 IDEMPOTENCY_KEY_IN_USE. |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `url` | string | no | Public https:// address of the file. Use this or data. |
+| `data` | string | no | The file as base64 (a data: URL works). Use this or url. |
+| `filename` | string | no | With data: the file name with extension, e.g. `storefront.jpg`. |
+| `title` | string | no |  |
+| `altText` | string | no |  |
+| `caption` | string | no |  |
+| `postId` | integer | no | Attach to this post or page. |
+| `asAdministrator` | boolean | no | Act as the site's administrator instead of the `porkbun-agent` editor. Needed for site settings, plugins, themes and users. Requires acknowledgeFullAccess. |
+| `acknowledgeFullAccess` | boolean | no | Confirms administrator-level changes were agreed. |
+| `dryRun` | boolean | no |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `media` | object |  |
+| `actsAs` | string |  |
+| `message` | string |  |
+
 ## POST /api/json/v3/hosting/createWpCredentials/{domain}
 
 **Mint WordPress REST API credentials (WordPress only)**
+
+**To edit a site's content from an agent, use `/hosting/wpRequest` and `/hosting/wpUploadMedia` instead: they run inside the site and need no password.** This endpoint is for code that calls the WordPress REST API itself.
 
 **Applies to:** Cloud for WordPress only.
 
@@ -6451,9 +6550,9 @@ Response fields:
 
 **Share one domain's website with someone (owner approves)**
 
-Starts sharing one domain's website with another person, so they and the AI agent they use can run it without the account. **Nothing is granted by this call.** It returns an `approveUrl` that the account holder opens on porkbun.com: the page shows exactly what will be shared, and approving there (logged in, after the usual re-verify) creates the share link, a QR code, a share code and a handoff prompt for the other person's agent. After approval, `GET /apikey/shares` returns the same bundle.
+Starts sharing one domain's website with another person, so they and the AI agent they use can run it without the account. **Nothing is granted by this call.** It returns an `approveUrl` that the account holder opens on porkbun.com: the page shows exactly what will be shared, and approving there (logged in, after the usual re-verify) creates a share link and QR code to send the other person; the link opens a page with a handoff prompt for their AI agent and the share code. After approval, `GET /apikey/shares` returns `shareUrl` (plus `handoffPrompt` and `shareCode`, for an agent that sends the message itself).
 
-The other person claims it once, within `claimHours` of approval. Set `accessHours` to make the access itself end on its own (e.g. 48), counted from the claim; leave it out for access until revoked. They claim it: their agent calls `/apikey/claim`, or they connect the Claude app or ChatGPT with the share code. Either way a new key is made on this account with the `site` permission alone, limited to the domain: the other person (and their AI agent) can run that one website: WordPress (via `/hosting/createWpCredentials`), static files, Link in Bio edits, backups and restores, staging, PHP and WordPress versions, SSL and search visibility. They cannot buy anything, cancel the hosting or change auto-renew, change DNS, turn on a Link in Bio page, or see the rest of the account (no other domains, balance or invoices). The account holder is emailed when it is claimed, the key shows as "Share: <name>" in API Access, and `/apikey/revokeShare` or deleting that key ends it.
+The other person claims it once, within `claimHours` of approval. Set `accessHours` to make the access itself end on its own (e.g. 48), counted from the claim; leave it out for access until revoked. They claim it: their agent calls `/apikey/claim`, or they connect the Claude app or ChatGPT with the share code. Either way a new key is made on this account with the `site` permission alone, limited to the domain: the other person (and their AI agent) can run that one website: WordPress content (`/hosting/wpRequest`, `/hosting/wpUploadMedia`), static files, Link in Bio edits, backups and restores, staging, PHP and WordPress versions, SSL and search visibility. They cannot buy anything, cancel the hosting or change auto-renew, change DNS, turn on a Link in Bio page, or see the rest of the account (no other domains, balance or invoices). The account holder is emailed when it is claimed, the key shows as "Share: <name>" in API Access, and `/apikey/revokeShare` or deleting that key ends it.
 
 The domain must have hosting or a Link in Bio page. A key that was itself shared cannot share onward. Not available with sandbox keys. Supports `dryRun`.
 
@@ -6551,7 +6650,7 @@ Response fields:
 
 **Claim a site share (no API key needed)**
 
-Called by the agent of the person a website was shared with, using the `shareToken` from the share link or handoff prompt. **No API key needed.** Works once, while the share is approved and unexpired: it returns a new key pair, made on the sharing account, with the `site` permission alone and limited to the shared domain: the other person (and their AI agent) can run that one website: WordPress (via `/hosting/createWpCredentials`), static files, Link in Bio edits, backups and restores, staging, PHP and WordPress versions, SSL and search visibility. They cannot buy anything, cancel the hosting or change auto-renew, change DNS, turn on a Link in Bio page, or see the rest of the account (no other domains, balance or invoices). Store the secret immediately; it is not shown again. Then start with `GET /hosting/get/{domain}`. To give the access back later, the same key calls `/apikey/revoke` (the account holder is emailed). Calls outside that return `INSUFFICIENT_SCOPE` or `DOMAIN_NOT_ALLOWED`.
+Called by the agent of the person a website was shared with, using the `shareToken` from the share link or handoff prompt. **No API key needed.** Works once, while the share is approved and unexpired: it returns a new key pair, made on the sharing account, with the `site` permission alone and limited to the shared domain: the other person (and their AI agent) can run that one website: WordPress content (`/hosting/wpRequest`, `/hosting/wpUploadMedia`), static files, Link in Bio edits, backups and restores, staging, PHP and WordPress versions, SSL and search visibility. They cannot buy anything, cancel the hosting or change auto-renew, change DNS, turn on a Link in Bio page, or see the rest of the account (no other domains, balance or invoices). Store the secret immediately; it is not shown again. Then start with `GET /hosting/get/{domain}`. To give the access back later, the same key calls `/apikey/revoke` (the account holder is emailed). Calls outside that return `INSUFFICIENT_SCOPE` or `DOMAIN_NOT_ALLOWED`.
 
 People using the Claude app or ChatGPT don't call this: they enter the share code when connecting the Porkbun connector. Rate limited to 20 calls per IP per hour.
 
