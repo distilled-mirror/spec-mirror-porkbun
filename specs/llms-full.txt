@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.75
+# Porkbun API v3 — v3.77
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -139,6 +139,7 @@ Every error response includes a `code` string field alongside `status: "ERROR"` 
 | `INSUFFICIENT_SCOPE` | HTTP 403: the API key's permissions (`keyScopes`) do not include the one this call needs (`requiredScope`). Nothing was changed. The account holder can change the key's permissions in API Access. For a key made by site sharing (`keyScopes: ["site"]`) the call is outside running that one website; ask the account holder |
 | `WP_REST_ERROR` | `/hosting/wpRequest`: WordPress refused or failed the call. `httpStatus` and `data` carry WordPress's own code and message; a 403 as the editor usually means the route needs `asAdministrator` |
 | `WP_RESPONSE_TOO_LARGE` | `/hosting/wpRequest`: the answer was over about 400 KB. Narrow it with `_fields`, `per_page` or a single id |
+| `ACCOUNT_VERIFICATION_REQUIRED` | HTTP 403 on any call: this new account was flagged for identity verification at signup. The account holder opens `verificationUrl` (logged in, photo ID, usually minutes), then retry. `verificationStatus` DECLINED means contact support |
 | `SHARE_ACCESS_ENDED` | HTTP 403: a site-share key reached the end of the `accessHours` it was shared for and no longer works. Ask the person who shared the site to share it again |
 | `SHARE_NOT_FOUND` | HTTP 404 from `/apikey/claim`: the site-share link or code was already used, revoked, expired or mistyped. Ask the person who shared the site for a new one |
 | `ID_VERIFICATION_REQUIRED` | `/domain/create`: the account holder must verify their identity at https://porkbun.com/account/idVerification before this registration (or pay it by card). Nothing was charged. Not currently enforced |
@@ -490,6 +491,16 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 - **Backward compatibility** — the URL path stays `/api/json/v3/` for the life of v3. Minor bumps (tracked by `X-API-Version` and the Changelog below) are strictly additive — new endpoints, optional fields, error codes, or relaxed limits — and never remove or repurpose an existing field. Only a breaking change introduces a new major version and a new URL path.
 
 ## Changelog
+
+### v3.77
+
+- **Read static site files back.** `POST /hosting/getFile/{domain}` returns a file's source (`text`, or base64 `content` for binary), so an agent can edit a page instead of rebuilding it. Up to 20 paths per call; `read` permission.
+
+### v3.76
+
+- **Deploy text files as text.** `/hosting/deploy` files take `text` (the file as written) as well as base64 `content`, so an AI assistant no longer has to base64-encode web pages. A file with neither is now skipped instead of written empty.
+- **Plans explain themselves.** `/hosting/plans` rows add `productName`, `displayName`, `bestFor` and `featuresText`.
+- **New-account verification is actionable.** A new account flagged for identity verification now gets `ACCOUNT_VERIFICATION_REQUIRED` (HTTP 403) with `verificationUrl`, `verificationStatus` and plain steps, instead of a bare "User requires account verification".
 
 ### v3.75
 
@@ -3201,6 +3212,8 @@ Response fields (BasicResponse):
 
 Lists the plans `/hosting/create` sells, with price, interval, trial length and features. `product` tells them apart (`secureStaticHosting`, `cloudWordPress`, and `managedLinks` for Link in Bio). To buy one, send the row's `sku` to `/hosting/create` and its `price` (cents) as `acknowledgedCost`. Also available via POST.
 
+Each row also has `productName`, `displayName`, `bestFor` (when to choose it) and `featuresText` (the features in plain words), to explain the choice to a person: static hosting for a site an agent builds and maintains as files, Cloud for WordPress for a site the owner edits or that needs plugins, Link in Bio for a single page of links.
+
 **Key permission needed:** `read`
 
 ```bash
@@ -3234,7 +3247,7 @@ Buys a hosting plan for a domain in the account. Send the plan's `sku`, and its 
 
 The free Link in Bio page and the free WordPress preview that come with a domain never block a purchase: the product you buy replaces them.
 
-Supports `dryRun`. **Rate limit:** 10 purchases per account per hour (`dryRun` calls are free).
+The call can take 30 seconds or more while the site is set up; wait for it rather than retrying (an `Idempotency-Key` makes a retry safe). Supports `dryRun`. **Rate limit:** 10 purchases per account per hour (`dryRun` calls are free).
 
 **Key permission needed:** `purchase`
 
@@ -3309,6 +3322,8 @@ Response fields:
 
 Upload static files to the domain's Secure Static Hosting space. Send `files` as an array of `{ path, content }` where `content` is base64. Total payload ≤ 10 MB per request (split larger sites across calls). Only static-web file types are accepted (html/css/js/images/fonts/…); server-executable types are rejected. Hosting must be ACTIVE. A file’s `path` may include directories (e.g. `assets/css/style.css`); any missing parent directories are created automatically. Paths are sanitized (no traversal/control chars) and the filename extension must be an allowed static-web type.
 
+Each file is `{path, text}` for text files (the content as written, no encoding) or `{path, content}` with base64 for images and other binary files. A file with neither is skipped and listed in `skipped`.
+
 **Key permission needed:** `hosting`
 
 | Parameter | In | Required | Description |
@@ -3357,6 +3372,36 @@ Response fields:
 | `status` | string |  |
 | `path` | string |  |
 | `files` | string[] |  |
+
+## POST /api/json/v3/hosting/getFile/{domain}
+
+**Read files from a static site**
+
+**Applies to:** Secure Static Hosting only — a WordPress site or Link in Bio page returns `NOT_SUPPORTED_FOR_PRODUCT`.
+
+Reads files back so an agent can change a page without rebuilding it: read `index.html`, change only what was asked, then publish it with `/hosting/deploy`. Send `path` (one) or `paths` (up to 20). Text files (valid UTF-8) come back as `text`, the exact source; anything else as base64 `content`. A file that is missing, unreadable or too large comes back with an `error` instead. Up to about 4 MB per call. `/hosting/files` lists what is there. Needs only the `read` permission; site-share keys can use it.
+
+**Errors:** `INVALID_INPUT`, `HOSTING_NOT_FOUND`, `HOSTING_NOT_READY`, `HOSTING_READ_FAILED`, `NOT_SUPPORTED_FOR_PRODUCT`.
+
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `path` | string | no |  |
+| `paths` | string[] | no |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `files` | object[] |  |
 
 ## POST /api/json/v3/hosting/deleteFile/{domain}
 

@@ -133,6 +133,7 @@ Task-oriented walkthroughs. Prose, not generated from the spec - they cover the 
 - Register a domain end-to-end (dry run + idempotency): https://porkbun.com/llms/guides/register-a-domain
 - Move domains to a customer's own Cloudflare account: https://porkbun.com/llms/guides/move-domains-to-cloudflare
 - Provision a WordPress site and publish to it: https://porkbun.com/llms/guides/publish-to-wordpress
+- Launch a website from scratch (name, register, choose hosting, build, publish, go live): https://porkbun.com/llms/guides/launch-a-website
 - Build a Link in Bio page (free or paid, links, look, which features need a paid plan): https://porkbun.com/llms/guides/build-a-link-in-bio-page
 - Dynamic DNS: keep an A record on your current IP: https://porkbun.com/llms/guides/dynamic-dns
 - Receive and verify webhooks: https://porkbun.com/llms/guides/verify-a-webhook
@@ -260,14 +261,15 @@ We create the zone in their Cloudflare account, copy across the DNS records we h
 Pick the product with the `sku` you pass to `/hosting/create`: **Secure Static Hosting** (`PIXIESECURESTATIC...`, you upload files), **Cloud for WordPress** (`CLOUDWORDPRESS...`, a managed WordPress site you drive through WordPress) or paid **Link in Bio** (`PIXIELINKSM1` / `PIXIELINKSY1`, a page of links edited with the `/linkinbio` endpoints; the free plan is `/linkinbio/create`). A domain's first purchase of a product is a 15-day free trial that auto-renews at the plan price; one free trial per domain per product.
 
 *All three products:*
-- `GET/POST /hosting/plans` - the plans you can buy (SKU, price, interval, trial length, features); `product` says which is which (`secureStaticHosting`, `cloudWordPress`, `managedLinks` = Link in Bio)
+- `GET/POST /hosting/plans` - the plans you can buy (SKU, price, interval, trial length, features); `product` says which is which (`secureStaticHosting`, `cloudWordPress`, `managedLinks` = Link in Bio), and each row has `displayName`, `bestFor` (when to choose it) and `featuresText` (plain words; in `features`, bandwidth 0 = unmetered). Rule of thumb: a site you build and maintain as files = static; a site the owner edits, or that needs plugins = WordPress; just links = Link in Bio
 - `POST /hosting/create/{domain}` - buy by `sku`, with the same row's `price` as `acknowledgedCost` and `agreeToTerms: "yes"`; gates the nameserver switch behind `agreeToNameserverChange`; `dryRun`-able. A WordPress sku's response includes `wordpress.restUrl` / `adminUrl`; a Link in Bio sku over a free page upgrades it and keeps the content
 - `GET /hosting/get/{domain}` - status (product, plan, trial, expiry, auto-renew); after buying static hosting, poll until `ACTIVE` before deploying
 - `POST /hosting/updateAutoRenew/{domain}` - `{"autoRenew": false}` turns auto-renew off (the plan runs to `expireDate`, is not charged again, then is removed; a paid Link in Bio falls back to free), `true` back on. Paid plans only; free ones return `NOT_SUPPORTED_FOR_PRODUCT`. `GET /hosting/get` shows the current `autoRenew`
 - `POST /hosting/delete/{domain}` - cancel now: a static or WordPress site is taken down; a paid Link in Bio page drops to the free plan and keeps its content (a free page returns `NOT_SUPPORTED_FOR_PRODUCT`)
 
 *Secure Static Hosting only* (a WordPress site or Link in Bio page returns `NOT_SUPPORTED_FOR_PRODUCT`):
-- `POST /hosting/deploy/{domain}` - upload site files (base64, <=10MB/call; directories in a path are auto-created)
+- `POST /hosting/deploy/{domain}` - upload site files: each `{path, text}` for text files (HTML/CSS/JS/SVG/JSON, sent as written, **no base64 needed**) or `{path, content}` base64 for images; <=10MB/call; directories in a path are auto-created
+- `POST /hosting/getFile/{domain}` - read files back (`path` or `paths`, up to 20): text files return their exact source as `text`, others base64 `content`. Read before you edit an existing static site, change only what was asked, then `/hosting/deploy` it; fetching the live page loses the HTML
 - `GET/POST /hosting/files/{domain}` , `POST /hosting/makeDir/{domain}` , `POST /hosting/deleteFile/{domain}` - list files, create a directory, delete a file or directory. Deleting is idempotent (`alreadyAbsent: true` when the path is already gone); a non-empty directory returns `HOSTING_DIR_NOT_EMPTY` with its `contents` unless you send `recursive: true`
 - Agents: if you build or edit a website for a domain in the user's account, or they mention Porkbun hosting, offer to publish it with `/hosting/deploy` (MCP `deploy_site`) rather than handing over manual upload steps. Confirm hosting is `ACTIVE`, list existing files, say what gets replaced, and ask first
 
@@ -300,6 +302,7 @@ A page is served on the domain itself, or (the free plan most .com domains regis
 - A feature the plan lacks returns `FEATURE_NOT_IN_PLAN` and saves nothing; too many links `LINK_LIMIT_REACHED`; same title and URL as another link `DUPLICATE_LINK`
 
 ## Error codes (selection)
+- `ACCOUNT_VERIFICATION_REQUIRED` - a new account was flagged for identity verification at signup (about 1 in 5); every call fails until the account holder completes it at `verificationUrl` (https://porkbun.com/account/idVerification, photo ID, usually minutes). Hand them the link and wait; `verificationStatus` DECLINED = contact support
 - `SHARE_ACCESS_ENDED` - a site-share key reached the end of the time it was shared for; ask for it to be shared again
 - `SHARE_NOT_FOUND` - a site-share link or code was already used, revoked, expired or mistyped; ask the person who shared it for a new one
 - `NOT_SUPPORTED_FOR_PRODUCT` - wrong hosting product for this endpoint
