@@ -6724,11 +6724,11 @@ Response fields:
 
 ## More
 
+- Short overview (start here): https://porkbun.com/llms.txt
 - Guides (how-tos): https://porkbun.com/llms/guides
 - Help articles (knowledge base) as Markdown: https://porkbun.com/llms/kb
 - Topic index: https://porkbun.com/llms
 - Full reference (one file): https://porkbun.com/llms-full.txt
 - OpenAPI spec (full schemas): https://porkbun.com/api/json/v3/spec
-- Short overview: https://porkbun.com/llms.txt
 - Official MCP server: https://porkbun.com/mcp (`npx -y @porkbunllc/mcp-server`)
 - Create API keys: https://porkbun.com/account/api
