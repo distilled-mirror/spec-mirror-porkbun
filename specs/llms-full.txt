@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.79
+# Porkbun API v3 — v3.84
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -510,6 +510,27 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 | `AGENT_LEGACY` | The agent belongs to a retired test registry; register it again. |
 
 ## Changelog
+
+### v3.84
+
+- **Get the identity certificate, not just its fingerprint.** `GET /ans/certificates/{agentId}` returns each identity certificate with `certificatePEM`, the chain, and `x5c` (base64 DER, ready for a JWS header), plus `signsWith` naming the JWS alg the key supports. Signing as an agent means putting the leaf in the signature, and nothing handed it back before. `/ans/rotateIdentity` returns the new certificate too.
+
+### v3.83
+
+- **Change an agent's identity key without changing its name.** `POST /ans/rotateIdentity/{agentId}` re-issues the identity certificate against a new CSR, keeping the same agent and version — previously this meant registering a higher version. Use it to move to a P-256 key for ES256 signing. The old certificate stays valid until it expires, so this is not a response to a compromised key; revoke instead.
+- **Identity CSRs are checked before they are sent.** Key type and size (ECDSA named P-256/P-384 or RSA 2048+; Ed25519, P-521 and EXPLICIT EC parameters refused), and the URI SAN matching the ANS name. The documented `openssl` command now generates P-256 rather than RSA.
+
+### v3.82
+
+- **`/ans/register` checks the registry's field limits itself.** `dryRun` now refuses what a real registration refuses — `description` over 150 bytes (the one that bit in practice), `displayName` over 64, a version with leading zeros, an endpoint host that is a subdomain of `agentHost` rather than equal to it, a non-https or over-long `metaDataUrl` — with a message naming the field. Lengths are in bytes, not characters.
+
+### v3.81
+
+- **Verify any agent, no key needed.** `GET /ans/verifyHost/{host}` takes a bare hostname and answers from public data only (the host's `_ans` record, the transparency log it points at, DNSSEC/DANE, the served certificate). It needs no API key and no agent of your own, and it works on agents registered with any ANS registry, not only Porkbun's. Returns `verified` (a genuine log entry) and `tier` (bronze/silver/gold) as separate answers.
+
+### v3.80
+
+- **`.jsonl` deploys to static hosting.** `/hosting/deploy` accepts JSON Lines files, and the endpoint now documents the full list of accepted extensions instead of an abbreviation.
 
 ### v3.79
 
@@ -3348,7 +3369,7 @@ Response fields:
 
 **Applies to:** Secure Static Hosting only — a WordPress site or Link in Bio page returns `NOT_SUPPORTED_FOR_PRODUCT`; manage its content through WordPress instead.
 
-Upload static files to the domain's Secure Static Hosting space. Send `files` as an array of `{ path, content }` where `content` is base64. Total payload ≤ 10 MB per request (split larger sites across calls). Only static-web file types are accepted (html/css/js/images/fonts/…); server-executable types are rejected. Hosting must be ACTIVE. A file’s `path` may include directories (e.g. `assets/css/style.css`); any missing parent directories are created automatically. Paths are sanitized (no traversal/control chars) and the filename extension must be an allowed static-web type.
+Upload static files to the domain's Secure Static Hosting space. Send `files` as an array of `{ path, content }` where `content` is base64. Total payload ≤ 10 MB per request (split larger sites across calls). Only static-web file types are accepted; a file with any other extension is skipped with `file type not allowed` in `skipped` (server-executable types such as php, cgi or py are never written). The full list: html, htm, css, js, mjs, cjs, json, jsonl, map, txt, md, csv, xml, xsl, rss, atom, svg, webmanifest, vtt, wasm, png, jpg, jpeg, gif, webp, avif, ico, bmp, woff, woff2, ttf, otf, eot, pdf. Hosting must be ACTIVE. A file’s `path` may include directories (e.g. `assets/css/style.css`); any missing parent directories are created automatically. Paths are sanitized (no traversal/control chars).
 
 Each file is `{path, text}` for text files (the content as written, no encoding) or `{path, content}` with base64 for images and other binary files. A file with neither is skipped and listed in `skipped`.
 
@@ -6762,6 +6783,14 @@ The endpoint must already serve HTTPS with a publicly trusted certificate. No ch
 
 **Errors:** `ANS_DOMAIN_NOT_ELIGIBLE` (the domain is not registered at Porkbun in this account; external domains added to the account don't count), `INVALID_INPUT`, `ANS_SERVER_CERT_UNREACHABLE`, `ANS_SERVER_CERT_INVALID`, `ANS_ALREADY_REGISTERED`, `ANS_REGISTRY_ERROR`, `RATE_LIMIT_EXCEEDED` (20 per hour per account), `DOMAIN_NOT_ALLOWED` (the key is limited to other domains).
 
+**Field limits.** Every length is in BYTES, not characters, so accented or non-Latin text reaches a limit sooner (75 two-byte characters are already 150 bytes). `dryRun: true` applies all of these, so a preview refuses exactly what a real call refuses.
+- `displayName` at most 64 bytes; `description` at most 150 bytes.
+- `version` is MAJOR.MINOR.PATCH with no leading `v` and no leading zeros (`1.10.2` yes, `01.0.0` no).
+- `agentHost` at most 253 bytes, at least two labels, each label at most 63 bytes of letters, digits and hyphens (no underscore, no leading or trailing hyphen, no trailing dot), and not an IP address.
+- `endpointUrl`'s host must **equal** `agentHost`; a subdomain of it is refused.
+- `metaDataUrl` must be https and at most 2048 bytes, printable ASCII without space, tab, `"`, `\` or `;`.
+- `capabilities`: at most 5 tags per capability, each tag at most 20 bytes, and names at most 64 bytes (longer tags and names are trimmed rather than refused, since they are a search aid).
+
 **Key permission needed:** `domains`
 
 | Parameter | In | Required | Description |
@@ -7066,6 +7095,139 @@ Response fields (AnsSearchResponse):
 | `status` | string |  |
 | `results` | object[] |  |
 | `pageToken` | string |  |
+
+## GET /api/json/v3/ans/verifyHost/{host}
+
+**Verify any agent by hostname (public)**
+
+The third-party check, and the only ANS endpoint that needs no API key.
+
+Give it a bare hostname and it answers from **public data only** — the host's `_ans` discovery record, the transparency log its `_ans-badge` record points at (entry, inclusion proof and signed checkpoint), DNSSEC/DANE, and the certificate the host actually serves. It reads nothing from the caller's account, works whether or not the agent is yours, and **works on agents registered with any ANS registry, not only Porkbun's** — the log URL comes from the host's own DNS.
+
+Two answers, and conflating them is the usual mistake:
+- `verified` — is this a genuine, current registry entry? Decided by the transparency log alone, so it holds even for a host that is offline.
+- `tier` — assurance: `bronze` (the served certificate matches the registry), `silver` (plus a DNSSEC-protected TLSA pin, i.e. DANE), `gold` (plus a proof the entry is in the append-only log). All three begin with PKI, so a host serving no TLS can be `verified` with `tier: none`.
+
+`checks` lists every step with `pass` / `fail` / `skip` and a human-readable `detail`; a `skip` caps the tier rather than failing the verdict. Pass `?version=1.0.0` to check one published version instead of the newest the host advertises.
+
+`identityCerts` lists the identity certificates the log attests for the agent, so a third party can verify something the agent *signed* (a content manifest, a response) and not merely that its host is live: hash the DER of the certificate carried in the signature and require it to be one of these — and check that certificate's own validity dates too, because the list accumulates across renewals.
+
+A trust tier says the agent is who it claims to be. It says nothing about whether what the agent does is safe or useful.
+
+Results are cached for 10 minutes per host and version (`cached` says which you got), and the endpoint is limited to 60 uncached checks per hour per IP.
+
+**Errors:** `INVALID_INPUT` (not a hostname — the agent name `ans://v1.0.0.myagent.example.com` is not one; use the part after the version), `RATE_LIMIT_EXCEEDED`.
+
+**Key permission needed:** `public`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `host` | path | yes | The agent's hostname, not its `ans://` name. |
+| `version` | query | no | Check this published version instead of the newest one advertised. |
+
+```bash
+curl https://api.porkbun.com/api/json/v3/ans/verifyHost/myagent.example.com
+```
+
+Response fields (AnsVerifyHostResponse):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `host` | string |  |
+| `verified` | boolean | A genuine, current registry entry, proved against the transparency log. |
+| `tier` | string |  |
+| `ansName` | string |  |
+| `agentId` | string | The registry's id for the agent, e.g. to fetch the log's signed status token for it. |
+| `agentStatus` | string |  |
+| `agentUrl` | string |  |
+| `expiresAt` | string |  |
+| `identityCerts` | object[] | The identity certificates the transparency log attests for this agent. Use these to check a signature the agent produced: take the certificate out of the signature (e.g. a JOSE `x5c` header), hash its DER, and require the result to appear here. Porkbun never holds the private key and the log carries no PEM, so the fingerprint is the anchor. **Membership is necessary but not sufficient.** The list accumulates: renewing an identity certificate adds a fingerprint and the previous certificate stays listed until it expires, and nothing re-emits a log entry at the moment one expires. So also check the presented certificate's own `notBefore`/`notAfter` at the time you verify, rather than trusting membership alone. (`notAfter` here is what the log recorded, not a substitute for reading the certificate.) For the same list signed by the log's own key, with expired certificates already filtered out, fetch `GET https://tl.ans.porkbun.com/v1/agents/{agentId}/status-token` — public, a COSE_Sign1 valid for up to an hour, and 410 once the agent is revoked or expired. Use `agentId` from this response. |
+| `checks` | object[] |  |
+| `warnings` | string[] |  |
+| `checkedAt` | string |  |
+| `publicData` | boolean | Always true: no account data was used. |
+| `cached` | boolean |  |
+
+## POST /api/json/v3/ans/rotateIdentity/{agentId}
+
+**Re-issue an agent's identity certificate against a new key**
+
+**Experimental.** Issue a new identity certificate for an agent, keeping the same agent and the same `version` — so the agent's `ans://` name does not change.
+
+Registering again on a version that exists returns `ANS_ALREADY_REGISTERED`, so without this the only way to move to a different key was to burn a version number. Use it to move from RSA to a P-256 key for ES256 signing, or to replace a key you no longer want to use.
+
+Send `identityCsrPEM` for the NEW key, with URI SAN exactly the agent's existing ANS name (`ans://v1.0.0.myagent.example.com`). The key must be ECDSA on a named P-256 or P-384 curve, or RSA 2048+; Ed25519, P-521 and EC keys with explicit curve parameters are refused. Porkbun never receives the private key.
+
+**The previous certificate stays valid** until its own `notAfter` and stays listed in the transparency log's attested identity certificates, so a verifier must check WHICH certificate signed a given signature (its `x5c`), not merely that one is listed. Rotating is therefore not a response to a compromised key: revoke the agent instead.
+
+The response includes the new certificate itself (`certificatePEM` and a ready-to-use `x5c`), as does `GET /ans/certificates/{agentId}`.
+
+The agent must be `ACTIVE` (`ANS_NOT_ACTIVE` otherwise). `dryRun: true` runs every check and sends nothing. 20 per hour per account.
+
+**Errors:** `INVALID_INPUT`, `ANS_NOT_ACTIVE`, `AGENT_NOT_FOUND`, `DOMAIN_NOT_ALLOWED`, `ANS_REGISTRY_ERROR`.
+
+**Key permission needed:** `domains`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `agentId` | path | yes |  |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `identityCsrPEM` | string | yes | PEM certificate request for the new key, URI SAN = the agent's existing ANS name. |
+| `dryRun` | boolean | no |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `agentId` | string |  |
+| `ansName` | string |  |
+| `csrStatus` | string |  |
+| `identityCertificates` | object[] |  |
+| `note` | string |  |
+
+## GET /api/json/v3/ans/certificates/{agentId}
+
+**Get an agent's identity certificates (including the certificate itself)**
+
+**Experimental.** The agent's identity certificates, newest first — including `certificatePEM` itself, which is what you need to sign anything *as* the agent.
+
+Signing produces a JWS whose header carries the leaf certificate (`x5c`), so a verifier can take it, hash its DER, and require the result to appear in the transparency log's attested identity certificates. `x5c` is returned ready to use: base64 DER, no PEM armour and no line breaks, which is exactly what a JWS header wants and the easiest conversion to get wrong by hand. `signsWith` names the JWS `alg` the key supports (`ES256` for P-256, `ES384` for P-384, `RS256` for RSA).
+
+**More than one certificate is normal.** Re-issuing with `/ans/rotateIdentity` adds one and the previous stays valid until its own `validTo`, so `newest: true` marks the one you most likely want. For the same reason a verifier must check WHICH certificate signed a given signature, not that some certificate is listed.
+
+Porkbun never holds the private key — that stays with whoever made the CSR, and it cannot be recovered. The certificate is public once it is in the log; this endpoint simply saves you extracting it from there. Chain to `identityRootUrl` (also public).
+
+The certificate is issued during validation, so there is none until the agent reaches `ACTIVE` (`ANS_NO_CERTIFICATE`). Needs only the `read` permission.
+
+**Errors:** `ANS_NO_CERTIFICATE`, `AGENT_NOT_FOUND`, `DOMAIN_NOT_ALLOWED`, `ANS_REGISTRY_ERROR`.
+
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `agentId` | path | yes |  |
+
+```bash
+curl https://api.porkbun.com/api/json/v3/ans/certificates/dd31b44e-2546-4a7c-af0d-313a8c8e8bb1 \
+  -H 'X-API-Key: pk1_...' -H 'X-Secret-API-Key: sk1_...'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `agentId` | string |  |
+| `ansName` | string |  |
+| `identityRootUrl` | string |  |
+| `identityCertificates` | object[] |  |
+| `note` | string |  |
 
 ---
 
