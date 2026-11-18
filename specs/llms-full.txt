@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.84
+# Porkbun API v3 — v3.100
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -510,6 +510,77 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 | `AGENT_LEGACY` | The agent belongs to a retired test registry; register it again. |
 
 ## Changelog
+
+### v3.100
+
+- **A read-only key could modify live files.** `/hosting/manifest` is mapped to the `read` permission because building only reads - but `markArtifacts`, added later, writes a provenance line into each artifact, and the mapping was never revisited. Marking now requires `hosting`, the same as publishing; a build without it is still a genuine read.
+- **CSV files are no longer marked.** A leading `#` line is a convention in some tools and plain data to the rest, so most parsers would read it as the header row. A format we cannot mark without risking the file is one we decline to mark.
+
+### v3.99
+
+- **The public verification endpoints were refusing scoped API keys.** They are keyless by design, and a caller that sent a key anyway (the MCP server always does) got `INSUFFICIENT_SCOPE` naming a `public` permission that does not exist and cannot be granted - which made `verify_artifact`, the tool a consuming agent most needs, unusable through the hosted MCP server. A key is now accepted whatever its permissions on `/ans/verifyArtifact`, `/ans/verifyManifest` and `/ans/verifyHost`. Scoping is unchanged everywhere else.
+
+### v3.98
+
+- `/ans/verifyArtifact`'s mismatch warning said you might be reading a cached copy. It fetches past caches, so it now says the file was taken from the origin with caching defeated - the previous wording invited someone to wait out a real alteration. (One of two copies of that text was fixed in 3.97; this is the other.)
+- An `unclaimed` file whose bytes match a file the manifest DOES cover now reports `identicalTo`, naming it: a faithful mirror and a pasted marker on invented content are both unclaimed, and telling them apart is most of what a reader wants.
+- `/hosting/deleteFile` says that a deleted file can still be served for up to a minute while caches expire, instead of reporting success and leaving a caller to conclude the delete failed.
+
+### v3.97
+
+- **`/ans/verifyArtifact` caches for 60 seconds, whatever the verdict.** Capping only `altered` fixed the embarrassing direction and left the dangerous one: a file tampered with after a verdict was cached kept reporting `verified`. A cached response now also carries `cacheNote` naming `fresh=1`.
+- **`signedBy` is null unless the file is actually covered.** An `unclaimed` file reports `manifestSignedBy` instead, so an interface rendering `signedBy` cannot present a pasted marker as a real agent's signature.
+- `/hosting/manifest` no longer claims nothing was written when `markArtifacts` has modified the artifacts, and reports `unmarkedArtifacts` with a reason for each skip.
+
+### v3.96
+
+- `/ans/verifyArtifact` no longer serves a stale verdict after a publish: artifact caches are cleared alongside manifest ones, a cached entry is discarded if its manifest has been republished, and an `altered` verdict is cached for 60 seconds rather than 10 minutes - an accusation that outlives the problem is worse than no answer.
+
+### v3.95
+
+- A published manifest now names the specification it follows (`spec`), inside the signature. The provenance marker teaches an agent holding a marked FILE where to look; this teaches one holding the manifest, which previously saw `"apm": "0.1"` and nothing else.
+
+### v3.94
+
+- **Any published file can now say how to check itself.** `/hosting/manifest` takes `markArtifacts: true` and writes an `agent-provenance` line into each artifact *before* hashing it - one short, greppable, self-describing line in whatever comment syntax the format uses. Unlike an HTTP header it survives copying, excerpting and scraping, so the pointer is still there when an agent meets the content somewhere else. It is a pointer, never evidence.
+- **`GET /ans/verifyArtifact?url=...`** (public, no key) takes any file URL, finds its manifest (marker, Link header, link tag, then the well-known path) and answers `verified`, `altered`, `unclaimed`, `none` or `inconclusive`. `unclaimed` and `none` are ordinary answers, not failures.
+
+### v3.93
+
+- `/ans/verifyManifest` sets `inconclusive: true` alongside `pendingPublish`, so a verdict about a manifest that has just been replaced does not read as a pass on current state to a client that only checks `authentic`.
+
+### v3.92
+
+- **Fixes the publish-then-verify staleness that 3.91 was supposed to fix and did not.** The shared cache-key change and the published-hash marker never reached the publisher (an edit that silently did not apply), so publishing still cleared a key nobody read. Both are in now, and a cached verdict is additionally refused when a newer manifest has been published for that URL - a backstop that does not depend on clearing working at all.
+
+### v3.91
+
+- **Agent manifests: a publish is visible to the verifier straight away.** The cache key had two definitions - the endpoint writing it and the publisher clearing it - and when the response shape changed only one was bumped, so publishing cleared a key nobody read. One definition now. Clearing alone was not enough either, since the origin serves the old file for up to a minute and the next request would cache it again: a publish records the hash it wrote, so a verify that reads a stale copy returns `pendingPublish: true` and is not cached. Added `fresh=1` so publishers do not need a cache-busting trick. An artifact mismatch is re-checked against the origin before it is reported, so an edge cache no longer looks like tampering. `artifactsOk` is null rather than true when something could not be checked, re-using a spent manifestId says `APM_MANIFEST_ALREADY_PUBLISHED` instead of claiming an expiry, and the signature-failure message names the expected certificate again.
+
+### v3.90
+
+- **Agent manifests: say which document was checked, and stop a stale answer looking like a fresh one.** `/ans/verifyManifest` returns `manifestSha256`/`manifestBytes` and a top-level `artifactsOk` (a signed manifest whose file has since changed is `authentic: true` with `artifactsOk: false`, which a caller reading only `authentic` would miss). Publishing now clears the verifier's cached answer for that URL, artifacts are fetched with `Cache-Control: no-cache`, and a `manifestId` is spent on a successful publish so an older signed manifest cannot be replayed. Artifact fields (`schema`, `source`, `updated`, `ttl`, `id`, `description`) are carried through instead of dropped, and the publish failure message names the three things that can actually be wrong.
+
+### v3.89
+
+- **Cancelling a Link in Bio takes the page down.** `/hosting/delete` on a paid page, and a paid page whose auto-renew is off reaching `expireDate`, used to drop it to the free plan. The page is now removed and its content archived (support can restore it); `/linkinbio/create` starts a new free page from placeholder content.
+
+### v3.88
+
+- **ANS verification follows the normative specs (ANS-0..ANS-6).** `/ans/check` and `/ans/verifyHost` now return `verdict` (`PASS` / `FAIL` / `INCONCLUSIVE`) and `proofs` (`identity`, `liveness`, `possession`) in place of `verified` and `tier`; Bronze/Silver/Gold is gone, because ANS-5 verifies and does not score. Each check carries a `severity` and may be `unreachable`. Only transparency logs on Porkbun's allowlist count, with their keys pinned (ANS-6 section 4.2): a badge pointing at any other log fails. New checks: the certificate must chain to a public root and name the host, and the DNS records sealed at registration must still be published (informational). `/ans/verifyManifest` returns `agentVerdict` in place of `tier`.
+- **DNS-AID discovery.** Agents registered on Porkbun nameservers now get the spec-default `ANS_DNSAID` profile (one SVCB record per endpoint at the agent host) instead of `_ans` TXT; agents whose DNS is hosted elsewhere keep `ANS_TXT`. The register dry run reports which (`discoveryProfile`). Revoking a version no longer deletes DNS records another live version still uses.
+
+### v3.87
+
+- **Publish a signed agent manifest from a site.** `POST /hosting/manifest/{domain}` hashes the artifacts as deployed, assembles an Agent Presence Manifest and returns the exact bytes to sign; `POST /hosting/publishManifest/{domain}` takes the signature, verifies it the way an outsider would, and only then writes `/.well-known/apm.json`. Opt-in, and only for a domain with an ACTIVE registered agent - the manifest's value is the identity behind it. Two calls because Porkbun never holds the signing key and so cannot sign for anyone. Verify the result with the public `/ans/verifyManifest`.
+
+### v3.86
+
+- **Verify that an agent produced a document.** `GET /ans/verifyManifest?url=...` (public, no key) checks a signed manifest end to end: the detached ES256 JWS, the certificate it carries, and - the part that matters - whether the transparency log attests that certificate for the agent being claimed. A self-minted certificate naming a real agent passes every other check and is caught there. `authentic` is a claim about the past (an expired signing certificate does not defeat it) and is reported apart from `agentLive`, while `inconclusive` separates a fetch we could not complete from a document we found wanting. Files listed in `collections[]` are fetched and hash-compared.
+
+### v3.85
+
+- Documented two things a verifier has to get right: an issued identity certificate carries **only the URI SAN** (a `DNS:` SAN in the CSR is not carried over), and `chainPEM` is a convenience rather than a trust anchor - pin the identity root or fetch it from the log host yourself.
 
 ### v3.84
 
@@ -3491,7 +3562,7 @@ Cancels the hosting on a domain now. To let a plan run to the end of its term in
 
 **By product:**
 - **Secure Static Hosting and Cloud for WordPress:** the site is taken down (Porkbun schedules the teardown). The domain has used its free trial, so buying the same product again later is charged.
-- **Link in Bio:** a paid page is not taken down. It moves to the free plan (50 links, without scheduling, animation, passcode protection or analytics IDs) and keeps its content. A free page has nothing to cancel and returns `NOT_SUPPORTED_FOR_PRODUCT`; free pages can't be turned off through the API.
+- **Link in Bio:** a paid page is taken down too. Its content is archived, not deleted (support can restore it); `/linkinbio/create` starts a new free page from placeholder content. A free page has nothing to cancel and returns `NOT_SUPPORTED_FOR_PRODUCT`; free pages can't be turned off through the API.
 
 **Errors:** `HOSTING_NOT_FOUND`, `NOT_SUPPORTED_FOR_PRODUCT`.
 
@@ -6027,7 +6098,7 @@ Response fields (LinkInBioResponse):
 
 **Applies to:** Secure Static Hosting, Cloud for WordPress and paid Link in Bio.
 
-The same switch as on the hosting page on porkbun.com. Off: the plan stays active until `expireDate` and is not charged again (a trial ends without a charge); after that the hosting is removed, except a paid Link in Bio page, which moves to the free plan with its content kept. On: it renews before `expireDate` at the plan price. `GET /hosting/get` shows the current setting (`autoRenew`).
+The same switch as on the hosting page on porkbun.com. Off: the plan stays active until `expireDate` and is not charged again (a trial ends without a charge); after that the hosting is removed (a Link in Bio page is taken down; its content is archived). On: it renews before `expireDate` at the plan price. `GET /hosting/get` shows the current setting (`autoRenew`).
 
 Free plans never renew, so they return `NOT_SUPPORTED_FOR_PRODUCT`. Supports `dryRun`. Not available with sandbox keys.
 
@@ -6947,9 +7018,9 @@ Response fields (AnsGetResponse):
 
 ## GET /api/json/v3/ans/check/{agentId}
 
-**Check an agent's trust tier**
+**Verify an agent independently**
 
-The independent check anyone can run, from public data only: discovery records, the transparency-log entry and its Merkle inclusion proof, the log's signed checkpoint, the certificate the host serves, and DANE. Returns `verified` (a genuine, current log entry) and `tier`: `bronze` (served certificate matches the registry), `silver` (+ DANE under DNSSEC) or `gold` (+ transparency log). `dnssecOffer` names the domain when `/ans/enableDnssec` could lift it to Silver/Gold.
+The independent check anyone can run, from public data only: discovery records, a transparency log we trust (only logs on Porkbun's allowlist count, ANS-6 section 4.2), the entry and its Merkle inclusion proof, the log's signed checkpoint, the certificate the host serves, and DANE. Returns `verdict`: `PASS`, `FAIL`, or `INCONCLUSIVE` (we could not look, e.g. the host or log was unreachable; that is not a finding). It also returns `proofs`, the three facts a caller needs before trusting a peer (ANS-6 section 3.1), each `pass` / `fail` / `unknown`: `identity` (a transparency log we trust seals this exact host and the certificate it serves), `liveness` (that registration is valid now), and `possession` (the host completed a TLS handshake with that certificate, which chains to a public root and names the host; where the zone is DNSSEC-signed its TLSA record must agree). `checks` lists every step with `result` `pass` / `fail` / `skip` (does not apply) / `unreachable`, a `severity` (`verdict` steps decide the verdict; `evidence` steps, such as whether the DNS records sealed at registration are still published, are reported only), and a human-readable `detail`. `log` names the transparency log and registry that vouched. There are no assurance tiers: the normative ANS specs (ANS-0..ANS-6, https://github.com/agentnameservice/ans-spec) verify and do not score, so Bronze/Silver/Gold was removed in v3.88. `dnssecOffer` names the domain when `/ans/enableDnssec` can sign the zone so the DANE step applies.
 
 **Errors:** `AGENT_NOT_FOUND`, `RATE_LIMIT_EXCEEDED` (120 per hour), `DOMAIN_NOT_ALLOWED` (the key is limited to other domains).
 
@@ -6966,17 +7037,18 @@ Response fields (AnsCheckResponse):
 | Field | Type | Description |
 |---|---|---|
 | `status` | string |  |
-| `verified` | boolean |  |
-| `tier` | string |  |
+| `verdict` | string |  |
+| `proofs` | object |  |
+| `log` | object |  |
 | `checks` | object[] |  |
 | `warnings` | string[] |  |
 | `dnssecOffer` | string |  |
 
 ## POST /api/json/v3/ans/check/{agentId}
 
-**Check an agent's trust tier**
+**Verify an agent independently**
 
-The independent check anyone can run, from public data only: discovery records, the transparency-log entry and its Merkle inclusion proof, the log's signed checkpoint, the certificate the host serves, and DANE. Returns `verified` (a genuine, current log entry) and `tier`: `bronze` (served certificate matches the registry), `silver` (+ DANE under DNSSEC) or `gold` (+ transparency log). `dnssecOffer` names the domain when `/ans/enableDnssec` could lift it to Silver/Gold.
+The independent check anyone can run, from public data only: discovery records, a transparency log we trust (only logs on Porkbun's allowlist count, ANS-6 section 4.2), the entry and its Merkle inclusion proof, the log's signed checkpoint, the certificate the host serves, and DANE. Returns `verdict`: `PASS`, `FAIL`, or `INCONCLUSIVE` (we could not look, e.g. the host or log was unreachable; that is not a finding). It also returns `proofs`, the three facts a caller needs before trusting a peer (ANS-6 section 3.1), each `pass` / `fail` / `unknown`: `identity` (a transparency log we trust seals this exact host and the certificate it serves), `liveness` (that registration is valid now), and `possession` (the host completed a TLS handshake with that certificate, which chains to a public root and names the host; where the zone is DNSSEC-signed its TLSA record must agree). `checks` lists every step with `result` `pass` / `fail` / `skip` (does not apply) / `unreachable`, a `severity` (`verdict` steps decide the verdict; `evidence` steps, such as whether the DNS records sealed at registration are still published, are reported only), and a human-readable `detail`. `log` names the transparency log and registry that vouched. There are no assurance tiers: the normative ANS specs (ANS-0..ANS-6, https://github.com/agentnameservice/ans-spec) verify and do not score, so Bronze/Silver/Gold was removed in v3.88. `dnssecOffer` names the domain when `/ans/enableDnssec` can sign the zone so the DANE step applies.
 
 **Errors:** `AGENT_NOT_FOUND`, `RATE_LIMIT_EXCEEDED` (120 per hour), `DOMAIN_NOT_ALLOWED` (the key is limited to other domains).
 
@@ -6993,8 +7065,9 @@ Response fields (AnsCheckResponse):
 | Field | Type | Description |
 |---|---|---|
 | `status` | string |  |
-| `verified` | boolean |  |
-| `tier` | string |  |
+| `verdict` | string |  |
+| `proofs` | object |  |
+| `log` | object |  |
 | `checks` | object[] |  |
 | `warnings` | string[] |  |
 | `dnssecOffer` | string |  |
@@ -7037,7 +7110,7 @@ Response fields (AnsRevokeResponse):
 
 **Turn on DNSSEC for an agent's domain**
 
-Signs the agent domain's zone and publishes the DS record at the registry in one step, so the TLSA record counts (Silver and Gold tiers). Only for domains registered at Porkbun, on Porkbun nameservers, in this account. Resolvers pick up the DS within a few hours. Turn it off from Domain Management if ever needed. Supports `dryRun`. A key limited to certain domains can only use agents on those domains or their subdomains.
+Signs the agent domain's zone and publishes the DS record at the registry in one step, so the agent's TLSA record counts: without DNSSEC a TLSA record is ignored (RFC 6698 section 4) and the DANE step of `/ans/check` does not apply. Only for domains registered at Porkbun, on Porkbun nameservers, in this account. Resolvers pick up the DS within a few hours. Turn it off from Domain Management if ever needed. Supports `dryRun`. A key limited to certain domains can only use agents on those domains or their subdomains.
 
 **Errors:** `AGENT_NOT_FOUND`, `ANS_DNSSEC_UNAVAILABLE`, `ANS_DNSSEC_FAILED`, `DOMAIN_NOT_ALLOWED` (the key is limited to other domains).
 
@@ -7102,19 +7175,17 @@ Response fields (AnsSearchResponse):
 
 The third-party check, and the only ANS endpoint that needs no API key.
 
-Give it a bare hostname and it answers from **public data only** — the host's `_ans` discovery record, the transparency log its `_ans-badge` record points at (entry, inclusion proof and signed checkpoint), DNSSEC/DANE, and the certificate the host actually serves. It reads nothing from the caller's account, works whether or not the agent is yours, and **works on agents registered with any ANS registry, not only Porkbun's** — the log URL comes from the host's own DNS.
+Give it a bare hostname and it answers from **public data only**, the way a caller about to connect would (ANS-6 section 5.1 plus the ANS-5 checks): the host's `_ans-badge` record, the transparency log that record names (**only logs we trust count**, with their keys pinned; a badge pointing anywhere else fails), the entry, its inclusion proof and signed checkpoint, the certificate the host actually serves, DANE where the zone is DNSSEC-signed, and whether the DNS records sealed at registration are still published. It reads nothing from the caller's account, works whether or not the agent is yours, and works for agents registered with **any registry whose log we trust** (currently Porkbun's and GoDaddy's production logs; GoDaddy's OTE test log is recognised but not trusted).
 
-Two answers, and conflating them is the usual mistake:
-- `verified` — is this a genuine, current registry entry? Decided by the transparency log alone, so it holds even for a host that is offline.
-- `tier` — assurance: `bronze` (the served certificate matches the registry), `silver` (plus a DNSSEC-protected TLSA pin, i.e. DANE), `gold` (plus a proof the entry is in the append-only log). All three begin with PKI, so a host serving no TLS can be `verified` with `tier: none`.
+Returns `verdict`: `PASS`, `FAIL`, or `INCONCLUSIVE` (we could not look, e.g. the host or log was unreachable; that is not a finding). It also returns `proofs`, the three facts a caller needs before trusting a peer (ANS-6 section 3.1), each `pass` / `fail` / `unknown`: `identity` (a transparency log we trust seals this exact host and the certificate it serves), `liveness` (that registration is valid now), and `possession` (the host completed a TLS handshake with that certificate, which chains to a public root and names the host; where the zone is DNSSEC-signed its TLSA record must agree). `checks` lists every step with `result` `pass` / `fail` / `skip` (does not apply) / `unreachable`, a `severity` (`verdict` steps decide the verdict; `evidence` steps, such as whether the DNS records sealed at registration are still published, are reported only), and a human-readable `detail`. `log` names the transparency log and registry that vouched. There are no assurance tiers: the normative ANS specs (ANS-0..ANS-6, https://github.com/agentnameservice/ans-spec) verify and do not score, so Bronze/Silver/Gold was removed in v3.88.
 
-`checks` lists every step with `pass` / `fail` / `skip` and a human-readable `detail`; a `skip` caps the tier rather than failing the verdict. Pass `?version=1.0.0` to check one published version instead of the newest the host advertises.
+Works for both discovery profiles (ANS-3 section 6): `_ans` TXT records (`ANS_TXT`) and DNS-AID SVCB records (`ANS_DNSAID`). `endpoints` lists what the sealed records describe; DNS-AID records carry protocol and port but no URL, so `agentUrl` is null for those agents. Pass `?version=1.0.0` to check one published version instead of the newest the host advertises.
 
-`identityCerts` lists the identity certificates the log attests for the agent, so a third party can verify something the agent *signed* (a content manifest, a response) and not merely that its host is live: hash the DER of the certificate carried in the signature and require it to be one of these — and check that certificate's own validity dates too, because the list accumulates across renewals.
+`identityCerts` lists the identity certificates the log attests for the agent, so a third party can verify something the agent *signed* (a content manifest, a response) and not merely that its host is live: hash the DER of the certificate carried in the signature and require it to be one of these — and check that certificate's own validity dates too, because the list accumulates across renewals. The certificate's single SAN is the URI (`ans://...`), not a DNS name, and it must equal the agent's `ansName`; chain it to the identity root fetched from the log host, or pinned at `sha256(DER) = d914e2e37b5810362cb9575d54784ff3a95abe01ba3ec703d9bff826a280edcc`.
 
-A trust tier says the agent is who it claims to be. It says nothing about whether what the agent does is safe or useful.
+A passing verdict says the agent is who it claims to be. It says nothing about whether what the agent does is safe or useful.
 
-Results are cached for 10 minutes per host and version (`cached` says which you got), and the endpoint is limited to 60 uncached checks per hour per IP.
+Results are cached for 10 minutes per host and version (`cached` says which you got; `INCONCLUSIVE` results are not cached), and the endpoint is limited to 60 uncached checks per hour per IP.
 
 **Errors:** `INVALID_INPUT` (not a hostname — the agent name `ans://v1.0.0.myagent.example.com` is not one; use the part after the version), `RATE_LIMIT_EXCEEDED`.
 
@@ -7135,12 +7206,14 @@ Response fields (AnsVerifyHostResponse):
 |---|---|---|
 | `status` | string |  |
 | `host` | string |  |
-| `verified` | boolean | A genuine, current registry entry, proved against the transparency log. |
-| `tier` | string |  |
+| `verdict` | string |  |
+| `proofs` | object |  |
+| `log` | object |  |
 | `ansName` | string |  |
 | `agentId` | string | The registry's id for the agent, e.g. to fetch the log's signed status token for it. |
 | `agentStatus` | string |  |
 | `agentUrl` | string |  |
+| `endpoints` | object[] |  |
 | `expiresAt` | string |  |
 | `identityCerts` | object[] | The identity certificates the transparency log attests for this agent. Use these to check a signature the agent produced: take the certificate out of the signature (e.g. a JOSE `x5c` header), hash its DER, and require the result to appear here. Porkbun never holds the private key and the log carries no PEM, so the fingerprint is the anchor. **Membership is necessary but not sufficient.** The list accumulates: renewing an identity certificate adds a fingerprint and the previous certificate stays listed until it expires, and nothing re-emits a log entry at the moment one expires. So also check the presented certificate's own `notBefore`/`notAfter` at the time you verify, rather than trusting membership alone. (`notAfter` here is what the log recorded, not a substitute for reading the certificate.) For the same list signed by the log's own key, with expired certificates already filtered out, fetch `GET https://tl.ans.porkbun.com/v1/agents/{agentId}/status-token` — public, a COSE_Sign1 valid for up to an hour, and 410 once the agent is revoked or expired. Use `agentId` from this response. |
 | `checks` | object[] |  |
@@ -7203,6 +7276,10 @@ Signing produces a JWS whose header carries the leaf certificate (`x5c`), so a v
 
 Porkbun never holds the private key — that stays with whoever made the CSR, and it cannot be recovered. The certificate is public once it is in the log; this endpoint simply saves you extracting it from there. Chain to `identityRootUrl` (also public).
 
+**Two things that bite people writing a verifier:**
+- The issued certificate carries **exactly one SAN, the URI** (`ans://v1.0.0.myagent.example.com`). A `DNS:` SAN in your CSR is not carried over, so verify against the URI and never key on a DNS name.
+- `chainPEM` is a convenience for building the chain, **not a trust anchor**. A chain handed to you beside the certificate proves nothing on its own. Fetch the root from the transparency log host independently, or pin it: `sha256(DER) = d914e2e37b5810362cb9575d54784ff3a95abe01ba3ec703d9bff826a280edcc`.
+
 The certificate is issued during validation, so there is none until the agent reaches `ACTIVE` (`ANS_NO_CERTIFICATE`). Needs only the `read` permission.
 
 **Errors:** `ANS_NO_CERTIFICATE`, `AGENT_NOT_FOUND`, `DOMAIN_NOT_ALLOWED`, `ANS_REGISTRY_ERROR`.
@@ -7228,6 +7305,226 @@ Response fields:
 | `identityRootUrl` | string |  |
 | `identityCertificates` | object[] |  |
 | `note` | string |  |
+
+## GET /api/json/v3/ans/verifyManifest
+
+**Verify a signed manifest: did this agent produce this document? (public)**
+
+**Experimental.** Checks whether a published document was really produced by the agent it names, from **public data only** - the document itself, the publishing host's DNS, and whichever transparency log that host's record points at. No API key needed — and a key sent anyway is accepted whatever its permissions, since this touches no account. It works for agents registered with **any** ANS registry, not only Porkbun's.
+
+The document is a JSON manifest carrying a detached JWS in `sig.jws`, signed over the RFC 8785 (JCS) form of itself with `sig` removed, with the signing certificate in the `x5c` header.
+
+**`authentic` and `agentLive` are separate answers, deliberately.** Authorship is a claim about the past: a document signed by an agent that has since gone quiet, or whose signing certificate has since expired, is still authentically that agent's work, and an expired certificate only adds a warning. Whether the agent is running *now* is `agentLive` / `agentStatus` / `agentVerdict` (the `/ans/verifyHost` verdict for the signing agent). Do not collapse them.
+
+**`inconclusive` is not a failure: it means this verdict does not establish what is live.** Two cases. If the publisher's host refuses us, rate-limits us, or the URL will not resolve, nothing was examined and nothing is claimed - `authentic: false` with `inconclusive: true` means we could not look, not that the document is forged. And if a newer manifest was just published but is not being served yet (`pendingPublish: true`), the document we read is genuinely `authentic` but is the one being replaced, so `inconclusive` is set too: a client reading only `authentic` would otherwise treat a superseded document as a pass on current state.
+
+**Artifacts are a second step, and it is a MUST.** The signature covers the manifest; files it lists in `collections[]` are covered only by the `sha256` recorded there. Each is fetched and compared, and reported in `artifacts[]`: `pass` (matches), `fail` (the file served is NOT the one the manifest vouches for), or `skip` (unreachable or too large to read, so again no claim either way). Pass `checkArtifacts=0` to skip it, but then a valid signature says nothing about the content. **Check `artifactsOk` as well as `authentic`:** a signed manifest whose file has since changed is `authentic: true` with `artifactsOk: false`.
+
+Artifacts are fetched with `Cache-Control: no-cache`, but an origin or CDN can still serve a file that was republished moments ago, which reads as a mismatch. If a file was just changed, re-check before treating a `fail` as tampering.
+
+Results are cached 10 minutes per URL and limited to 60 uncached checks per hour per IP. Pass `fresh=1` to bypass the cache (20/hour/IP). Inconclusive results are not cached, and neither are results marked `pendingPublish`. A cached entry is also refused outright if it describes a document that has since been republished, so a stale verdict cannot be served even if the cache was not cleared.
+
+`artifactsOk` is `null`, not `true`, when an artifact could not be checked: unknown is not the same as fine. Requests identify themselves as `porkbun-ans-verifier/1`.
+
+**Errors:** `INVALID_INPUT`, `RATE_LIMIT_EXCEEDED`.
+
+**Key permission needed:** `public`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `url` | query | yes | https URL of the signed manifest. |
+| `checkArtifacts` | query | no | Set to 0 to skip fetching and hashing the files the manifest lists. |
+| `fresh` | query | no | Set to 1 to bypass the cache and re-check now. Costlier, so it has its own tighter limit (20/hour/IP) on top of the normal one. |
+
+```bash
+curl 'https://api.porkbun.com/api/json/v3/ans/verifyManifest?url=https://example.com/.well-known/apm.json'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `authentic` | boolean | The named agent produced this document. |
+| `inconclusive` | boolean | Nothing could be examined; not a negative verdict. |
+| `manifestSha256` | string | sha256 of the manifest bytes this verdict is about. Compare it with the one publishManifest returned to tell a fresh answer from a cached one about the document you replaced. |
+| `manifestBytes` | integer |  |
+| `artifactsOk` | boolean | False when a listed file no longer matches its recorded hash. `authentic` stays true in that case - the manifest is signed, the FILE changed - so a caller reading only `authentic` would miss it. Null when artifacts were not checked. |
+| `pendingPublish` | boolean | A newer manifest was published for this URL moments ago and is not being served yet, so this verdict describes the document it replaced. `inconclusive` is set too, so the safe reading is the default. Never cached; check again shortly, or use `fresh=1`. |
+| `signedBy` | object |  |
+| `agent` | object |  |
+| `agentLive` | boolean |  |
+| `agentStatus` | string |  |
+| `agentVerdict` | string | The /ans/verifyHost verdict for the signing agent right now. |
+| `checks` | object[] |  |
+| `artifacts` | object[] |  |
+| `warnings` | string[] |  |
+| `checkedAt` | string |  |
+| `publicData` | boolean |  |
+| `cached` | boolean |  |
+
+## POST /api/json/v3/hosting/manifest/{domain}
+
+**Build an agent manifest for a site and return the bytes to sign**
+
+**Experimental, and entirely opt-in.** Builds an Agent Presence Manifest: a signed, machine-readable statement of what a site publishes and which agent produced it, so another agent can consume the data rather than scrape the page, and can *check* the claim rather than trust it.
+
+**Requires an ACTIVE agent registered for this exact domain in this account** (`APM_NO_AGENT` / `APM_AGENT_NOT_ACTIVE` otherwise). The manifest's entire value is the identity behind it, so there is nothing to publish without one. The agent's identity key must be ECDSA P-256; an RSA identity gets `APM_KEY_NOT_SIGNING_CAPABLE` and can be moved with `/ans/rotateIdentity` without changing its name.
+
+**Porkbun never holds your signing key, so publishing is two calls.** This one writes nothing: it reads each artifact as deployed, records its real `sha256`, assembles the manifest and returns `signingInput` — the exact bytes to sign with the agent's private key (ES256) — plus a `manifestId` naming those bytes. Send the signature and that id to `/hosting/publishManifest/{domain}`.
+
+Descriptive fields on each artifact (`type`, `format`, `schema`, `source`, `updated`, `id`, `description`, `ttl`) are carried into the manifest unchanged, so rebuilding does not quietly drop what a publisher already recorded. They sit inside the signature: they are the publisher's statement, not ours.
+
+The manifest names the format it is in (`spec`), so a reader who finds the document on its own can learn how to verify it rather than guessing from `"apm": "0.1"`. It is inside the signature, so it cannot be swapped for a pointer to some other format.
+
+Pass `markArtifacts: true` to have an `agent-provenance` line written into each file before it is hashed, so the document itself tells a stranger's agent where its manifest is and how to check it (https://porkbun.com/llms/guides/verify-agent-content). The marker is a pointer, never evidence.
+
+A path that is not deployed returns `APM_ARTIFACT_NOT_FOUND` rather than being dropped: a manifest listing a file nobody can fetch is worse than one that omits it.
+
+**Errors:** `APM_NO_AGENT`, `APM_AGENT_NOT_ACTIVE`, `APM_NO_CERTIFICATE`, `APM_KEY_NOT_SIGNING_CAPABLE`, `APM_ARTIFACT_NOT_FOUND`, `APM_NOT_CANONICALISABLE`, `HOSTING_READ_FAILED`, `INVALID_INPUT`.
+
+**Key permission needed:** `read`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `artifacts` | object[] | yes | Files already deployed on the site that the manifest should vouch for. |
+| `entity` | object | no |  |
+| `policy` | object | no |  |
+| `endpoints` | object[] | no |  |
+| `notes` | string | no |  |
+| `markArtifacts` | boolean | no | Write an `agent-provenance` marker into each artifact before hashing it, so the file carries a pointer to its own manifest. The marker survives copying, excerpting and scraping, which no HTTP header does. Order matters and is handled here: marker first, then hash, then sign. Needs the `hosting` permission, since it writes to live files. Formats that cannot carry a comment safely are skipped (JSON, images, CSV); `markedArtifacts` lists what was written and `unmarkedArtifacts` why anything was not. |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `ansName` | string |  |
+| `manifestId` | string | Names these exact bytes; pass it to publishManifest. Valid 30 minutes. |
+| `manifest` | object | The unsigned manifest. |
+| `manifestPath` | string |  |
+| `signingInput` | string | Sign these ASCII bytes with the agent key, ES256. |
+| `signWith` | object |  |
+| `howToSign` | string |  |
+| `note` | string |  |
+| `markedArtifacts` | string[] | Paths a provenance marker was written into. |
+| `unmarkedArtifacts` | object[] | Artifacts that did NOT get a marker, and why (no comment syntax for the format, or already marked). |
+
+## POST /api/json/v3/hosting/publishManifest/{domain}
+
+**Publish the signed agent manifest to the site**
+
+**Experimental.** Second half of publishing: send the signature made over the `signingInput` from `/hosting/manifest/{domain}`, with the `manifestId` that named those bytes.
+
+`signature` is the ES256 signature as the **64-byte r||s pair, base64url-encoded** — not the ASN.1/DER blob `openssl dgst -sign` emits, which must be converted first.
+
+**The signature is verified here, exactly as an outsider would verify it, before anything is written.** If it does not verify, nothing is published (`APM_SIGNATURE_INVALID` with the failing check): publishing a manifest that does not verify would put a broken provenance claim on the site under the agent's name.
+
+The artifacts are re-read and re-hashed too. If a file changed since the manifest was built, `APM_ARTIFACTS_CHANGED` — build again so the recorded hashes match what is deployed.
+
+On success the manifest is written to `/.well-known/apm.json` and the response includes a `verifyUrl` (`/ans/verifyManifest`, callable by anyone with no API key) and `manifestSha256`.
+
+**Serving can lag the write by up to a couple of minutes.** A verify run immediately afterwards may read the previous file; compare the `manifestSha256` in the verify response with the one returned here to tell them apart. Publishing clears the verifier's cached answer for that URL AND records the hash just published, so a verify that reads a not-yet-served copy comes back with `pendingPublish: true` instead of reporting the superseded document as current. `fresh=1` on the verifier re-checks immediately.
+
+**A `manifestId` is single-use:** it is spent on a successful publish, so an older signed manifest cannot be replayed for the rest of its lifetime. A *failed* publish does not spend it, so a bad signature can be retried against the same id. Re-using a spent id returns `APM_MANIFEST_ALREADY_PUBLISHED`, which is a different thing from `APM_MANIFEST_EXPIRED` (unknown or older than 30 minutes). Re-publish whenever an artifact changes, since the manifest records hashes.
+
+`dryRun: true` verifies and reports what would be published without writing.
+
+**Errors:** `APM_SIGNATURE_INVALID`, `APM_MANIFEST_ALREADY_PUBLISHED`, `APM_MANIFEST_EXPIRED`, `APM_ARTIFACTS_CHANGED`, `APM_NO_AGENT`, `HOSTING_DEPLOY_FAILED`, `INVALID_INPUT`.
+
+**Key permission needed:** `hosting`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `domain` | path | yes |  |
+
+Request body fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `signature` | string | yes | ES256 r\|\|s, base64url. |
+| `manifestId` | string | no | From /hosting/manifest. Preferred: it guarantees the bytes verified are the bytes signed. |
+| `artifacts` | object[] | no | Files already deployed on the site that the manifest should vouch for. |
+| `dryRun` | boolean | no |  |
+| `entity` | object | no |  |
+| `policy` | object | no |  |
+| `endpoints` | object[] | no |  |
+| `notes` | string | no |  |
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `domain` | string |  |
+| `ansName` | string |  |
+| `manifestUrl` | string |  |
+| `verifyUrl` | string |  |
+| `collections` | object[] |  |
+| `note` | string |  |
+| `manifestSha256` | string | sha256 of the published manifest bytes. |
+
+## GET /api/json/v3/ans/verifyArtifact
+
+**Verify who published any file (public)**
+
+**Experimental.** Give it **any** published URL - a `.txt`, an HTML page, a JSON file - and it finds out whether an AI agent claims to have published it, and whether the bytes still match. No API key needed — and a key sent anyway (the MCP server always sends one) is accepted whatever its permissions, since this touches no account. It works for agents registered with any ANS registry.
+
+A plain file has nowhere to carry a signature, so this does the discovery an agent would otherwise have to do itself, in order: an `agent-provenance` marker **inside the file**; a `Link: rel="agent-manifest"` response header; a `<link rel="agent-manifest">` tag; then `/.well-known/apm.json` on the same host. `discoveredVia` says which worked.
+
+The marker is the one that survives copying. A header is gone the moment content is excerpted or pasted somewhere else; a line inside the bytes travels with them, which is also how you discover that a copy claims provenance it cannot support.
+
+**`provenance` is the answer:**
+- `verified` - a signed manifest covers this file and the bytes match.
+- `altered` - a signed manifest covers it and the bytes do NOT match. Do not attribute the content.
+- `unclaimed` - a manifest exists but does not list this file. Nobody claims it; not a failure. **A marker alone is not a claim**, since anyone can paste one onto anything. Matching is by origin AND path, so a copy at another URL is unclaimed however faithful it is; when its bytes match a file the manifest does cover, `identicalTo` names that URL, which distinguishes a mirror from invented content.
+- `none` - the site publishes no manifest. This is what most of the web answers, and it is not a problem.
+- `inconclusive` - not enough could be fetched to say.
+
+How to do all of it yourself, without trusting Porkbun: https://porkbun.com/llms/guides/verify-agent-content
+
+**Cached for 60 seconds**, whatever the verdict — this is a statement about bytes that can change at any moment, and it must not outlive the window in which they can change. A longer cache on `verified` would mean vouching for a file that was tampered with after the check. `fresh=1` re-checks now (20/hour/IP) and the response carries `cacheNote` when you got a cached one. A cached verdict is also discarded if the manifest behind it has since been republished. The manifest-level verdict is cached longer, so a miss here costs one fetch of the file, not the whole chain.
+
+**Errors:** `INVALID_INPUT`, `RATE_LIMIT_EXCEEDED`.
+
+**Key permission needed:** `public`
+
+| Parameter | In | Required | Description |
+|---|---|---|---|
+| `url` | query | yes | https URL of the file to check. |
+| `fresh` | query | no |  |
+
+```bash
+curl 'https://api.porkbun.com/api/json/v3/ans/verifyArtifact?url=https://example.com/guides/brewing.html'
+```
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string |  |
+| `url` | string |  |
+| `provenance` | string |  |
+| `discoveredVia` | string |  |
+| `manifestUrl` | string |  |
+| `sha256` | string | Hash of the bytes served to us. |
+| `expectedSha256` | string | Hash the signed manifest records for this path. |
+| `signedBy` | object | Who published THIS file. Null unless `provenance` is `verified` or `altered` — for an `unclaimed` file the manifest and the agent are real but neither vouches for these bytes, and an interface rendering this field without reading `provenance` would present a forgery as signed by that agent. |
+| `manifestSignedBy` | object | Who signed the MANIFEST that was found, when it does not cover this file. Never a claim about the file. |
+| `identicalTo` | string | Set on an `unclaimed` file whose bytes are identical to one the manifest DOES cover, naming that URL. A faithful mirror and a pasted marker on invented content both come back unclaimed; this tells them apart. It is not a claim about this URL — a manifest covers a file at a specific origin and path. |
+| `agent` | object |  |
+| `manifest` | object |  |
+| `warnings` | string[] |  |
+| `checkedAt` | string |  |
+| `publicData` | boolean |  |
+| `cached` | boolean |  |
 
 ---
 

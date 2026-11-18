@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Porkbun API Documentation — domains, DNS, SSL &amp; hosting for developers and AI agents</title>
-  <meta name="description" content="The Porkbun API (v3.84) is a developer- and agent-friendly REST API to register, renew, transfer and manage domains, DNS &amp; DNSSEC, SSL certificates, email forwarding, the marketplace, static and WordPress hosting, Cloudflare connect, and outbound webhooks — with machine-readable errors, idempotency keys, a full OpenAPI spec, an official MCP server, and an isolated sandbox.">
+  <meta name="description" content="The Porkbun API (v3.100) is a developer- and agent-friendly REST API to register, renew, transfer and manage domains, DNS &amp; DNSSEC, SSL certificates, email forwarding, the marketplace, static and WordPress hosting, Cloudflare connect, and outbound webhooks — with machine-readable errors, idempotency keys, a full OpenAPI spec, an official MCP server, and an isolated sandbox.">
   <link rel="canonical" href="https://porkbun.com/api/json/v3/documentation">
   <meta name="robots" content="index, follow">
   <!-- Open Graph / Twitter for shareable, SEO-friendly previews -->
@@ -27,7 +27,7 @@
     "name": "Porkbun API",
     "abstract": "REST API to register and manage domains, DNS, DNSSEC, SSL, email forwarding, marketplace, static hosting, and webhooks.",
     "url": "https://porkbun.com/api/json/v3/documentation",
-    "softwareVersion": "3.84",
+    "softwareVersion": "3.100",
     "provider": { "@type": "Organization", "name": "Porkbun, LLC", "url": "https://porkbun.com" },
     "programmingModel": "REST/JSON",
     "documentation": "https://porkbun.com/api/json/v3/spec"
@@ -104,7 +104,7 @@
   <header class="brand">
     <div class="wrap">
       <div class="logo"><img src="/images/porkbun.comphpPkl2eU.svg" alt="Porkbun">porkbun<span>API</span></div>
-      <div class="meta">v3.84<a href="/">porkbun.com</a></div>
+      <div class="meta">v3.100<a href="/">porkbun.com</a></div>
     </div>
   </header>
 
@@ -134,7 +134,7 @@
         <div class="card"><h3>Secure Static Hosting</h3><p>Provision hosting and deploy a static site end-to-end — no dashboard.</p></div>
         <div class="card"><h3>WordPress hosting</h3><p>Provision a managed <strong>Cloud for WordPress</strong> site, then edit its pages, posts and images through Porkbun (no WordPress password needed), or mint REST API credentials for your own code. Change PHP and WordPress versions, take and restore backups, and try changes on a staging copy before publishing them.</p></div>
         <div class="card"><h3>Link in Bio</h3><p>Turn on a free Link in Bio page on a domain or buy a paid plan, then set the profile, links, social icons and look. <a href="/llms/guides/build-a-link-in-bio-page">Guide</a>.</p></div>
-        <div class="card"><h3>Agent Naming (ANS) <small>experimental</small></h3><p>Give an AI agent a verifiable name, identity certificate and public transparency-log entry, check its trust tier, and search the <a href="/agents">agent directory</a>. Free. <a href="/llms/guides/agent-naming">Guide</a>.</p></div>
+        <div class="card"><h3>Agent Naming (ANS) <small>experimental</small></h3><p>Give an AI agent a verifiable name, identity certificate and public transparency-log entry, verify any agent independently, and search the <a href="/agents">agent directory</a>. Free. <a href="/llms/guides/agent-naming">Guide</a>.</p></div>
         <div class="card"><h3>Site sharing</h3><p>Let someone else, and their AI agent, run one domain's website without your account: you approve, they get a one-time link, QR code and handoff prompt. <a href="/llms/guides/share-site-access">Guide</a>.</p></div>
         <div class="card"><h3>Official MCP server</h3><p><code>npx @porkbunllc/mcp-server</code> — the whole API as tools for Claude, Cursor and any MCP client. Or connect ChatGPT and Claude to the hosted server with a sign-in, no install. See <a href="/mcp">porkbun.com/mcp</a>.</p></div>
         <div class="card"><h3>Terraform &amp; DNS as code</h3><p>Manage domains and DNS from Terraform or OpenTofu with the community providers built on this API, or from DNSControl, octoDNS, external-dns and cert-manager. Setup, sandbox testing and the differences between providers: <a href="/terraform">porkbun.com/terraform</a>.</p></div>
@@ -156,7 +156,7 @@
         <div><strong>REST / JSON</strong><span>HTTPS only. Reads accept GET; writes are POST with a JSON body. Every response has a stable <code>status</code>.</span></div>
         <div><strong>Idempotency</strong><span>Send <code>Idempotency-Key</code> on any write; retries within 24h replay the original response — no double-charging.</span></div>
         <div><strong>Dry run</strong><span>Pass <code>dryRun: true</code> to rehearse a billable or destructive write (price, funds, eligibility) without performing it.</span></div>
-        <div><strong>Versioning</strong><span>Every response carries <code>X-API-Version</code> (currently 3.84). The path stays <code>/v3</code>; minor bumps are backward-compatible.</span></div>
+        <div><strong>Versioning</strong><span>Every response carries <code>X-API-Version</code> (currently 3.100). The path stays <code>/v3</code>; minor bumps are backward-compatible.</span></div>
         <div><strong>Request IDs</strong><span>An <code>X-Request-Id</code> header + <code>requestId</code> body field (UUIDv7) on every response for retries, logs, and support.</span></div>
       </div>
     </div>
