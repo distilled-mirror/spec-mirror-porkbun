@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.100
+# Porkbun API v3 — v3.107
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -510,6 +510,38 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 | `AGENT_LEGACY` | The agent belongs to a retired test registry; register it again. |
 
 ## Changelog
+
+### v3.107
+
+- Every APM error code now carries a `next_action`, which the release checklist requires and which none of them had: they were in the spec's error tables but returned no machine-readable hint, so an agent got prose and nothing to act on. `ANS_NOT_ACTIVE` too.
+
+### v3.106
+
+- `/hosting/deploy` refuses a path containing a percent sign instead of writing it literally. Percent-encoded segments created unreachable shadow files beside real ones; the path is now rejected with a reason rather than having the offending segment dropped, which could have turned `.well-known/%2eapm.json` into a FILE named `.well-known`.
+
+### v3.105
+
+- `/ans/verifyArtifact` reports `superseded` and `pendingPublish`. The rollback detection added in 3.101 only surfaced on `/ans/verifyManifest`, so an artifact check - the call a consuming agent actually makes - showed a restored manifest as plainly `verified`, with the reason buried in a warning string. Handing it a manifest URL now also goes through the URL-based path, so the same checks apply either way, and neither verdict is cached.
+
+### v3.104
+
+- Finishes the key-title limit: the create form's `maxlength`, both placeholders, and the edit endpoint (`/api/user/updateWidgetSettings`) still enforced or advertised 15. All six places now read one named limit, so the form, the page, the edit modal, the API and the libraries cannot drift apart again.
+
+### v3.103
+
+- The 15-character key-title limit was also enforced on the account page's create forms, which 3.102 missed: raising it in the libraries alone meant the website still refused what the rest of the system now accepted. Both forms use the same named limit, and count characters rather than bytes so a short non-Latin name is no longer rejected.
+
+### v3.102
+
+- **Key titles are no longer cut to 15 characters.** Two sandbox helpers and the site-share path truncated there, so "Share: Claude Code" became "Share: Claude C" - and the title is how someone decides WHICH key to revoke, so two keys from one app collapsed into the same label. The column is varchar(255) and the main creation path never truncated at all (titles like "Claude Code (connected app)" are 27 characters and always rendered fine). One named limit of 60 now, in all three places.
+- `GET /apikey/shares` explains why `approveUrl` is null on a pending share, in the response (`approveUrlNote`) and the docs. The behaviour is deliberate - the link grants access and is shown once - but a bare null reads like a bug.
+
+### v3.101
+
+- **An older signed manifest could be put back by uploading it.** A manifest is a file, so any key able to write files - including a site-share key with no publishing permission - could restore a previous one, and it verified as current because the signature really was genuine. The single-use publish token did not help: nothing went through the publish flow. Two defences: `/.well-known/apm.json` is now writable and deletable ONLY by `/hosting/publishManifest`, and the verifier reports `superseded` (with `inconclusive`) when the manifest being served is not the one last published and the serving lag is long past.
+- `DOMAIN_NOT_ALLOWED` names the domains the key may be used on, and says not to retry - it previously nudged callers toward asking for broader access.
+- A domain with no hosting at all now reports `HOSTING_NOT_FOUND` rather than `APM_NO_AGENT`, which sent people off to register an agent for a domain that cannot serve a manifest.
+- APM errors name the MCP tool as well as the REST path.
 
 ### v3.100
 
@@ -3440,7 +3472,7 @@ Response fields:
 
 **Applies to:** Secure Static Hosting only — a WordPress site or Link in Bio page returns `NOT_SUPPORTED_FOR_PRODUCT`; manage its content through WordPress instead.
 
-Upload static files to the domain's Secure Static Hosting space. Send `files` as an array of `{ path, content }` where `content` is base64. Total payload ≤ 10 MB per request (split larger sites across calls). Only static-web file types are accepted; a file with any other extension is skipped with `file type not allowed` in `skipped` (server-executable types such as php, cgi or py are never written). The full list: html, htm, css, js, mjs, cjs, json, jsonl, map, txt, md, csv, xml, xsl, rss, atom, svg, webmanifest, vtt, wasm, png, jpg, jpeg, gif, webp, avif, ico, bmp, woff, woff2, ttf, otf, eot, pdf. Hosting must be ACTIVE. A file’s `path` may include directories (e.g. `assets/css/style.css`); any missing parent directories are created automatically. Paths are sanitized (no traversal/control chars).
+Upload static files to the domain's Secure Static Hosting space. Send `files` as an array of `{ path, content }` where `content` is base64. Total payload ≤ 10 MB per request (split larger sites across calls). Only static-web file types are accepted; a file with any other extension is skipped with `file type not allowed` in `skipped` (server-executable types such as php, cgi or py are never written). The full list: html, htm, css, js, mjs, cjs, json, jsonl, map, txt, md, csv, xml, xsl, rss, atom, svg, webmanifest, vtt, wasm, png, jpg, jpeg, gif, webp, avif, ico, bmp, woff, woff2, ttf, otf, eot, pdf. Hosting must be ACTIVE. A file’s `path` may include directories (e.g. `assets/css/style.css`); any missing parent directories are created automatically. Paths are sanitized (no traversal/control chars), and a path containing a percent sign is refused outright: send the literal path you want, never a percent-encoded one. We do not decode it, so `%2e` would be written as those three characters, creating a file nobody can fetch without double-encoding.
 
 Each file is `{path, text}` for text files (the content as written, no encoding) or `{path, content}` with base64 for images and other binary files. A file with neither is skipped and listed in `skipped`.
 
@@ -6758,6 +6790,8 @@ Response fields:
 
 This account's site shares (`/apikey/share`), newest first: `status` is `PENDING` (waiting for the account holder's approval), `ACTIVE` (approved, link not used), `CLAIMED` (the other person connected), `REVOKED` or `EXPIRED`. For an `ACTIVE` share, keys with full access or the `account` permission also get `shareUrl`, `qrCodeUrl`, `shareCode` and `handoffPrompt` to pass on; other keys see the share without them. A domain-limited key sees only its domains' shares. Also available via GET.
 
+**`approveUrl` is null on a PENDING share, on purpose.** The approval link grants access to the domain, so it is returned once — when the share is created — and never again; re-serving it here would let any key that can read shares harvest pending links. `approveUrlNote` says so in the response. A lost link is replaced by revoking the share and creating another.
+
 **Key permission needed:** `read`
 
 Response fields:
@@ -7351,6 +7385,7 @@ Response fields:
 | `manifestBytes` | integer |  |
 | `artifactsOk` | boolean | False when a listed file no longer matches its recorded hash. `authentic` stays true in that case - the manifest is signed, the FILE changed - so a caller reading only `authentic` would miss it. Null when artifacts were not checked. |
 | `pendingPublish` | boolean | A newer manifest was published for this URL moments ago and is not being served yet, so this verdict describes the document it replaced. `inconclusive` is set too, so the safe reading is the default. Never cached; check again shortly, or use `fresh=1`. |
+| `superseded` | boolean | The manifest being served is NOT the one last published for this URL, and the serving lag is long past: an earlier signed manifest has been restored, or the file was edited outside the publishing flow. The signature is genuine, which is why this matters - no signature check can see a rollback. `inconclusive` is set too, and such results are never cached. |
 | `signedBy` | object |  |
 | `agent` | object |  |
 | `agentLive` | boolean |  |
@@ -7429,7 +7464,7 @@ Response fields:
 
 The artifacts are re-read and re-hashed too. If a file changed since the manifest was built, `APM_ARTIFACTS_CHANGED` — build again so the recorded hashes match what is deployed.
 
-On success the manifest is written to `/.well-known/apm.json` and the response includes a `verifyUrl` (`/ans/verifyManifest`, callable by anyone with no API key) and `manifestSha256`.
+`/.well-known/apm.json` can only be written by THIS endpoint: ordinary file operations refuse that path, so an older signed manifest cannot be put back by uploading it. On success the manifest is written to `/.well-known/apm.json` and the response includes a `verifyUrl` (`/ans/verifyManifest`, callable by anyone with no API key) and `manifestSha256`.
 
 **Serving can lag the write by up to a couple of minutes.** A verify run immediately afterwards may read the previous file; compare the `manifestSha256` in the verify response with the one returned here to tell them apart. Publishing clears the verifier's cached answer for that URL AND records the hash just published, so a verify that reads a not-yet-served copy comes back with `pendingPublish: true` instead of reporting the superseded document as current. `fresh=1` on the verifier re-checks immediately.
 
@@ -7481,6 +7516,8 @@ A plain file has nowhere to carry a signature, so this does the discovery an age
 
 The marker is the one that survives copying. A header is gone the moment content is excerpted or pasted somewhere else; a line inside the bytes travels with them, which is also how you discover that a copy claims provenance it cannot support.
 
+**Check `superseded` as well as `provenance`.** A rollback of the manifest decides what is claimed about every file it lists, and every signature involved stays valid, so `provenance: verified` with `superseded: true` means the claim is genuine but out of date.
+
 **`provenance` is the answer:**
 - `verified` - a signed manifest covers this file and the bytes match.
 - `altered` - a signed manifest covers it and the bytes do NOT match. Do not attribute the content.
@@ -7519,6 +7556,8 @@ Response fields:
 | `signedBy` | object | Who published THIS file. Null unless `provenance` is `verified` or `altered` — for an `unclaimed` file the manifest and the agent are real but neither vouches for these bytes, and an interface rendering this field without reading `provenance` would present a forgery as signed by that agent. |
 | `manifestSignedBy` | object | Who signed the MANIFEST that was found, when it does not cover this file. Never a claim about the file. |
 | `identicalTo` | string | Set on an `unclaimed` file whose bytes are identical to one the manifest DOES cover, naming that URL. A faithful mirror and a pasted marker on invented content both come back unclaimed; this tells them apart. It is not a claim about this URL — a manifest covers a file at a specific origin and path. |
+| `superseded` | boolean | The manifest behind this verdict is not the one last published: an earlier signed manifest was restored, or the file was edited outside the publishing flow. What it claims about this artifact is out of date even though every signature is genuine. Never cached. |
+| `pendingPublish` | boolean | A newer manifest was just published and is not being served yet, so this verdict describes the previous one. Never cached; re-check shortly. |
 | `agent` | object |  |
 | `manifest` | object |  |
 | `warnings` | string[] |  |
