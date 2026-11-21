@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.107
+# Porkbun API v3 — v3.109
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -7,6 +7,9 @@ The Porkbun API enables programmatic domain registration, DNS management, SSL ce
 ## Sandbox / test mode
 
 Build and test an integration end-to-end with **no real registry actions, no DNS changes, no certificates, and no charges** by using a **sandbox API key** — a public key prefixed `pk1_sb_` (secret `sk1_sb_`), created at https://porkbun.com/account/api. Same base URL; just swap the key. In sandbox:
+- **A sandbox key sees only sandbox data.** Domains, DNS records, contacts and everything else in your live Porkbun account are invisible to it, including on a key you created on your own API Access page. Calling a live domain in the sandbox returns `INVALID_DOMAIN` for that reason, not because the name is wrong.
+- **Everything in the sandbox is created through the API.** The website only creates the keys. Register a test domain with `POST /domain/create/{domain}` first; that also creates its DNS zone, so there is no separate zone step.
+- **First steps:** `POST /domain/checkDomain/{name}` on a name nobody has registered, then `POST /domain/create/{domain}`, then `POST /dns/create/{domain}`, then `GET /dns/retrieve/{domain}`.
 - Every response includes `"sandbox": true` and an `X-Porkbun-Sandbox: true` header.
 - Registrations, renewals, transfers, DNS, contacts, nameservers, glue, and DNSSEC are simulated against an isolated datastore; your account starts with fake credit (top up/reset via `/sandbox/topup` and `/sandbox/reset`). Availability and pricing reflect the real catalog so quotes match production.
 - Endpoints that can't be simulated — **hosting**, **email**, **closeouts** and **agent naming (ANS)** — return `SANDBOX_UNSUPPORTED`. Closeouts are excluded because the inventory and the purchase both live with a third party that has no test environment, so a simulated buy would claim a real domain.
@@ -88,8 +91,8 @@ Or use the hosted server with no install: `https://mcp.porkbun.com/mcp`. Clients
 - **Per-key scoping** — restrict each API key to specific source IPs (with CIDR support) and/or specific target domains. Lets you hand an agent a key that can only operate on the domains you intend, from the network you expect
 - **Plain-text docs for LLMs** — a short overview at [/llms.txt](https://porkbun.com/llms.txt) and the full reference as flat Markdown at [/llms-full.txt](https://porkbun.com/llms-full.txt), and per-topic pages at [/llms](https://porkbun.com/llms) (no JavaScript required, generated from this spec)
 - **Per-TLD registration requirements (JSON Schema)** — `GET /domain/getRegistrationRequirements/{tld}` returns whether a TLD is registerable via the API, the `/domain/create` body as a JSON Schema, and (for TLDs with registry eligibility rules like `.us`/`.ca`) a second JSON Schema of the required fields and allowed values. Assemble and validate a registration payload before sending it, instead of discovering requirements through failed attempts.
-- **Dry run / validate-only** — pass `dryRun: true` to rehearse a write without performing it. On the billable ops (`/domain/create`, `/domain/renew`, `/domain/transfer`) it runs every pre-flight check and returns the would-be cost, balance, and `wouldSucceed` WITHOUT charging. It also works on **DNS record writes** (`/dns/create`, `/dns/edit`, `/dns/editByNameType`, `/dns/delete`, `/dns/deleteByNameType`) and **nameserver updates** (`/domain/updateNs`): validates ownership, the target record, and permissions, returns `wouldSucceed` WITHOUT mutating anything — so an agent can safely rehearse a destructive change before applying it
-- **Per-operation safety metadata** — every operation in this spec carries an `x-porkbun-agent` vendor extension `{safe, cost, destructive, reversible, requiresConfirmation}` so a tool generator or planner can tell a read from a billable or destructive write without heuristics (the official MCP exposes equivalent read-only/destructive hints as standard MCP tool annotations)
+- **Dry run / validate-only** — pass `dryRun: true` to rehearse a write without performing it. On the billable ops (`/domain/create`, `/domain/renew`, `/domain/transfer`) it runs every pre-flight check and returns the would-be cost, balance, and `wouldSucceed` WITHOUT charging. It also works on **DNS record writes** (`/dns/create`, `/dns/edit`, `/dns/editByNameType`, `/dns/delete`, `/dns/deleteByNameType`) and **nameserver updates** (`/domain/updateNs`): validates ownership, the target record, and permissions, returns `wouldSucceed` WITHOUT mutating anything — so an agent can safely rehearse a destructive change before applying it. It also works on every **webhook write** (`/webhook/create`, `/webhook/update`, `/webhook/delete`, `/webhook/rotateSecret`, `/webhook/test`, `/webhook/resend`)
+- **Per-operation safety metadata** — every operation in this spec carries an `x-porkbun-agent` vendor extension `{safe, cost, destructive, reversible, requiresConfirmation}` so a tool generator or planner can tell a read from a billable or destructive write without heuristics (the official MCP exposes equivalent read-only/destructive hints as standard MCP tool annotations). `requiresConfirmation` is an instruction to the **client** — ask the person before calling — not a server-side gate: the API does not reject these calls for lacking a confirmation field. The one exception is `/apikey/revoke`, which needs `confirm: "revoke"` because it revokes the key making the call. Use `dryRun` to rehearse first
 - **Retryability on errors** — each error's `next_action` includes a `retryable` boolean: `true` only for transient conditions where re-sending the same request can succeed (rate limits, in-flight idempotency, provisioning-not-ready); `false` when you must change something first. Branch on it instead of guessing from the message
 
 ## Intended use
@@ -510,6 +513,17 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 | `AGENT_LEGACY` | The agent belongs to a retired test registry; register it again. |
 
 ## Changelog
+
+### v3.109
+
+- **`dryRun` now works on the webhook endpoints, which ignored it.** `/webhook/delete` and `/webhook/rotateSecret` performed the real deletion or rotation when sent `dryRun: true`, and returned no dry-run marker — so a caller rehearsing a destructive call destroyed the thing it was checking. Reported by an external researcher. `/webhook/create`, `/webhook/update`, `/webhook/test` and `/webhook/resend` gained the same support.
+- The `x-porkbun-agent` description now says what `requiresConfirmation` means: an instruction to the client, not a server-enforced gate.
+
+### v3.108
+
+- Sandbox keys explain themselves. Calling a domain that is in your live account with a sandbox key returned `INVALID_DOMAIN: not in the account`, which read as "your domain is missing"; the message and `next_action.hint` now say that a sandbox key only sees domains registered in the sandbox and point at `/domain/create`. `/domain/checkDomain` carries a `sandboxNote` saying the same. The code and `next_action.type` are unchanged.
+- The `INVALID_DOMAIN` hint no longer says only "check the formatting": that code also means the domain is not in this key's account, which is the common case.
+- The "Sandbox / test mode" section above now states that live account data is never visible to a sandbox key, that everything in the sandbox is created through the API, and gives the first four calls to make.
 
 ### v3.107
 
@@ -2720,7 +2734,7 @@ Response fields:
 | Field | Type | Description |
 |---|---|---|
 | `status` | string |  |
-| `id` | integer | The ID of the newly created record, as a JSON number. `/dns/retrieve` and `existingId` carry record IDs as strings, so compare them as strings. |
+| `id` | integer | The ID of the newly created record, as a JSON number -- the one place in the DNS endpoints where an ID is not a string. `/dns/retrieve`, and `existingId` on this endpoint's own `DUPLICATE_RECORD` error, carry the same IDs as strings, so compare them as strings. It stays a number for the life of v3 because changing a field's type would break existing clients; v4 makes it a string. The MCP server already returns it as a string, so agents using that do not see the difference. |
 | `warnings` | string[] | Advisory, and present only when there is something to say. It never means the call failed. The one to handle: a DNS write is accepted and stored even when the domain is NOT delegated to our nameservers -- we keep the zone ready in case the delegation comes back -- so the write changed nothing that resolves, and this field says so. Show these to the user as written. |
 
 ## POST /api/json/v3/dns/edit/{domain}/{id}
