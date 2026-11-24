@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.109
+# Porkbun API v3 — v3.112
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -513,6 +513,19 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 | `AGENT_LEGACY` | The agent belongs to a retired test registry; register it again. |
 
 ## Changelog
+
+### v3.112
+
+- `/ping` and `/ip` return IPv6 addresses in canonical lowercase again. 3.111 started reporting the value the rest of the app uses, which is uppercased internally, so `2600:1F14::1` came back where a caller expects `2600:1f14::1` -- a string mismatch for the dynamic-DNS scripts that poll this endpoint to decide whether a record needs updating. The address is unchanged; only its spelling was.
+
+### v3.111
+
+- **`/ping` and `/ip` now report the IP we actually enforce against.** Both read the FIRST `X-Forwarded-For` entry, which is whatever the caller sent, so a client behind a proxy that sets that header was told to allowlist an address that could never match -- while API key IP allowlists were, and still are, checked against the last entry (the one our load balancer appends). Access control was never affected; the reported value was. The full chain is still returned as `xForwardedFor`.
+
+### v3.110
+
+- **Two new DNS record types: `SMIMEA` (RFC 8162) and `OPENPGPKEY` (RFC 7929)**, on the website and the API. SMIMEA publishes an S/MIME certificate at `<hash>._smimecert.<domain>` and takes TLSA-style content (`usage selector matching_type certificate-hex`). OPENPGPKEY publishes an OpenPGP public key at `<hash>._openpgpkey.<domain>` as base64. Both are only meaningful in a DNSSEC-signed zone.
+- OPENPGPKEY content is capped at 2,500 characters and checked for valid base64. The cap is ours: longer keys are refused upstream with an unhelpful internal error well below the documented size limit, so we refuse them here with a message that suggests a minimal export or Web Key Directory.
 
 ### v3.109
 
