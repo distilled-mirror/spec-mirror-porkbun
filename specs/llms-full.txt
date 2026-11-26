@@ -1,4 +1,4 @@
-# Porkbun API v3 — v3.112
+# Porkbun API v3 — v3.114
 
 > Full Markdown reference for LLMs and agents. Machine-readable OpenAPI spec: https://porkbun.com/api/json/v3/spec
 > Prefer a single topic? Per-area pages are indexed at https://porkbun.com/llms
@@ -499,6 +499,8 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 | Code | Meaning |
 |------|---------|
 | `ANS_DOMAIN_NOT_ELIGIBLE` | `/ans/register`: agents can only be registered on domains registered at Porkbun in this account (or their subdomains). Register or transfer the domain first. |
+| `ANS_NAME_NOT_ALLOWED` | `/ans/register`: the display name or a subdomain label of the agent host contains a name reserved to prevent impersonation (`field` and `reserved` say which). Choose another name, or contact support if you are authorized to use it. |
+| `ANS_AGENT_LIMIT` | `/ans/register`: the domain or the account already holds as many agents as it can (`limitScope` is `domain` or `account`, with `limit` and `agentCount`). Revoke an agent you no longer use, or ask support to raise the limit. A new version of an existing agent is not affected. |
 | `ANS_SERVER_CERT_UNREACHABLE` | `/ans/register`: no certificate could be read from the agent endpoint. It must already serve HTTPS with a publicly trusted certificate, or pass `serverCertificatePEM`. |
 | `ANS_SERVER_CERT_INVALID` | `/ans/register`: the registry rejected the server certificate (wrong host, expired, or not chaining to a public root; include intermediates). |
 | `ANS_ALREADY_REGISTERED` | That agent host and version is already registered; register a higher version. |
@@ -513,6 +515,18 @@ Explicit contract points for autonomous clients. These are stable within the `v3
 | `AGENT_LEGACY` | The agent belongs to a retired test registry; register it again. |
 
 ## Changelog
+
+### v3.114
+
+- The reduced `ANS_AGENT_LIMIT` account cap of 3 agents now also applies until the account's email address and phone number are verified, not only while the account is under 30 days old. Support can still raise it.
+- `/ans/search` leaves out agents whose endpoint has not answered for 24 hours (no HTTP response, or 5xx), and lists them again on their first good answer. A 401, 405 or similar counts as answering. The agent stays registered and verifiable.
+
+### v3.113
+
+- `/ans/register` refuses a new agent with `ANS_AGENT_LIMIT` once the domain holds 10 agents or the account holds 25 (3 while the account is under 30 days old). Subdomain agents count toward their domain. A new version of an agent you already have never counts, and registrations abandoned for a week free their slot. Support can raise the limit. The dry run applies the same check.
+- `/ans/register` refuses `ANS_NAME_NOT_ALLOWED` when the display name or a subdomain label of the agent host contains a name reserved to prevent impersonation (the same list domain registration uses). A name that is part of your registered domain itself is allowed. The description, capabilities and tags are never refused for naming a brand.
+- Anyone can report an agent from the directory (porkbun.com/agents), and Porkbun revokes agents that impersonate, spam or scam. A revoked agent shows `agentStatus` REVOKED.
+- `/ans/search` leaves out agents whose owner account is suspended. If the suspension lasts 3 days, Porkbun revokes them.
 
 ### v3.112
 
@@ -6913,7 +6927,7 @@ Returns `agentStatus: PENDING_VALIDATION`. If the agent host's domain is on Pork
 
 The endpoint must already serve HTTPS with a publicly trusted certificate. No charge. Supports `dryRun`. A key limited to certain domains can only use agents on those domains or their subdomains.
 
-**Errors:** `ANS_DOMAIN_NOT_ELIGIBLE` (the domain is not registered at Porkbun in this account; external domains added to the account don't count), `INVALID_INPUT`, `ANS_SERVER_CERT_UNREACHABLE`, `ANS_SERVER_CERT_INVALID`, `ANS_ALREADY_REGISTERED`, `ANS_REGISTRY_ERROR`, `RATE_LIMIT_EXCEEDED` (20 per hour per account), `DOMAIN_NOT_ALLOWED` (the key is limited to other domains).
+**Errors:** `ANS_DOMAIN_NOT_ELIGIBLE` (the domain is not registered at Porkbun in this account; external domains added to the account don't count), `ANS_AGENT_LIMIT` (the domain or account already holds as many agents as it can), `ANS_NAME_NOT_ALLOWED` (the display name or host contains a name reserved to prevent impersonation), `INVALID_INPUT`, `ANS_SERVER_CERT_UNREACHABLE`, `ANS_SERVER_CERT_INVALID`, `ANS_ALREADY_REGISTERED`, `ANS_REGISTRY_ERROR`, `RATE_LIMIT_EXCEEDED` (20 per hour per account), `DOMAIN_NOT_ALLOWED` (the key is limited to other domains).
 
 **Field limits.** Every length is in BYTES, not characters, so accented or non-Latin text reaches a limit sooner (75 two-byte characters are already 150 bytes). `dryRun: true` applies all of these, so a preview refuses exactly what a real call refuses.
 - `displayName` at most 64 bytes; `description` at most 150 bytes.
@@ -7603,4 +7617,8 @@ Response fields:
 - Full reference (one file): https://porkbun.com/llms-full.txt
 - OpenAPI spec (full schemas): https://porkbun.com/api/json/v3/spec
 - Official MCP server: https://porkbun.com/mcp (`npx -y @porkbunllc/mcp-server`)
+- Porkbun for AI agents (overview): https://porkbun.com/ai-agents
+- Agent Name Service (verifiable agent identity): https://porkbun.com/ans
+- Agent content provenance (signed manifests): https://porkbun.com/agent-provenance
+- Terraform / DNS as code: https://porkbun.com/terraform
 - Create API keys: https://porkbun.com/account/api
